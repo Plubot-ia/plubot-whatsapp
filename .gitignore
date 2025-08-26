@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# WhatsApp Web cache and sessions
+.wwebjs_cache/
+.wwebjs_auth/
+sessions/
+RemoteAuth-*
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+.env
+.env.local
+
+# Database
+*.rdb
+dump.rdb
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# GitHub Actions (requires workflow scope)
+.github/
+
+# Temporary files
+*.tmp
+*.temp

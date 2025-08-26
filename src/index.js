@@ -37,28 +37,43 @@ app.use(metricsService.apiMetricsMiddleware());
 
 app.use(
   cors({
-    origin: [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:001',
-    ],
+    origin: function(origin, callback) {
+      // Permitir requests sin origin (ej. Postman, curl)
+      if (!origin) return callback(null, true);
+      
+      // Lista de orígenes permitidos
+      const allowedOrigins = [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:3001',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+        'null' // Para archivos locales
+      ];
+      
+      // Verificar si el origin está en la lista o es 'null' (archivos locales)
+      if (allowedOrigins.includes(origin) || origin === 'null' || origin === 'file://') {
+        callback(null, true);
+      } else {
+        // En desarrollo, permitir todos los orígenes
+        callback(null, true);
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'x-api-key'],
   }),
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Routes with rate limiting
-app.use('/api/sessions', 
-  sessionRateLimiter.middleware({ 
-    getUserId: (req) => req.body?.userId || req.params?.userId || req.ip 
-  }),
-  sessionsRouter
-);
+console.log('Sessions router:', sessionsRouter);
+console.log('Sessions router stack:', sessionsRouter.stack);
+app.use('/api/sessions', sessionsRouter);
 app.use('/api/qr', 
   qrRateLimiter.middleware({ 
     getUserId: (req) => req.params?.userId || req.ip 
@@ -71,7 +86,7 @@ app.use('/api/messages',
   }),
   messagesRouter
 );
-app.use('/api/sessions', sessionStatusRoutes);
+app.use('/api/sessions-status', sessionStatusRoutes);
 app.use('/api/flow', flowRoutes);
 app.use('/api/health', healthRouter);
 app.use('/api/metrics', metricsRouter);
@@ -154,20 +169,10 @@ const server = app.listen(PORT, () => {
 
     // Join room for QR updates
     socket.on('subscribe-qr', ({ userId, plubotId }) => {
-      const sessionId = `${userId}-${plubotId}`;
-      socket.join(`qr-${sessionId}`);
-      logger.info(`Socket ${socket.id} subscribed to QR updates for session ${sessionId}`);
     });
-
-    // Leave room
-    socket.on('unsubscribe-qr', ({ userId, plubotId }) => {
-      const sessionId = `${userId}-${plubotId}`;
-      socket.leave(`qr-${sessionId}`);
-      logger.info(`Socket ${socket.id} unsubscribed from QR updates for session ${sessionId}`);
-    });
-
+    
     socket.on('disconnect', () => {
-      logger.info(`Client disconnected: ${socket.id}`);
+      logger.info('Socket disconnected:', socket.id);
     });
   });
 

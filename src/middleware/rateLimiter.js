@@ -1,5 +1,6 @@
 import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
+import IORedis from 'ioredis';
 import redisClient from '../config/redis.js';
 import logger from '../utils/logger.js';
 

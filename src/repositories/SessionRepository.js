@@ -39,7 +39,7 @@ export class SessionRepository {
       this.sessions.set(sessionId, cleanSession);
       
       // Persist to Redis
-      await this.persistToRedis(sessionId, cleanSession);
+      await this.saveToRedis(sessionId, cleanSession);
       
       // Return DTO
       return SessionDTO.fromSession(cleanSession);
@@ -88,18 +88,29 @@ export class SessionRepository {
     }
 
     // Check Redis
-    try {
-      const data = await this.redis.get(`${this.sessionPrefix}${sessionId}`);
-      if (data) {
-        const session = JSON.parse(data);
-        this.sessions.set(sessionId, session);
-        return SessionDTO.fromSession(session);
-      }
-    } catch (error) {
-      logger.error(`Failed to retrieve session ${sessionId} from Redis:`, error.message);
-    }
+    return await this.getFromRedis(sessionId);
+  }
 
-    return null;
+  async getFromRedis(sessionId) {
+    try {
+      const key = `session:${sessionId}`;
+      const data = await this.redis.get(key);
+      if (data) {
+        // Refresh TTL on access
+        await this.redis.expire(key, 86400);
+        
+        // Update last accessed time
+        const metaKey = `session_meta:${sessionId}`;
+        await this.redis.hSet(metaKey, 'lastAccessed', new Date().toISOString());
+        
+        logger.debug(`Session ${sessionId} retrieved from Redis`);
+        return JSON.parse(data);
+      }
+      return null;
+    } catch (error) {
+      logger.error(`Failed to get session ${sessionId} from Redis:`, error);
+      return null;
+    }
   }
 
   /**
@@ -123,9 +134,34 @@ export class SessionRepository {
     this.sessions.set(sessionId, updatedSession);
 
     // Persist to Redis
-    await this.persistToRedis(sessionId, updatedSession);
+    await this.saveToRedis(sessionId, updatedSession);
 
     return SessionDTO.fromSession(updatedSession);
+  }
+
+  async saveToRedis(sessionId, data) {
+    try {
+      const key = `session:${sessionId}`;
+      // Use setEx for atomic TTL setting
+      await this.redis.setEx(key, 86400, JSON.stringify(data)); // 24 hours TTL
+      
+      // Track active sessions
+      await this.redis.sAdd('active_sessions', sessionId);
+      
+      // Store session metadata for quick lookups
+      const metaKey = `session_meta:${sessionId}`;
+      await this.redis.hSet(metaKey, {
+        userId: data.userId || '',
+        plubotId: data.plubotId || '',
+        status: data.status || 'initializing',
+        createdAt: new Date().toISOString()
+      });
+      await this.redis.expire(metaKey, 86400);
+      
+      logger.debug(`Session ${sessionId} saved to Redis with TTL`);
+    } catch (error) {
+      logger.error(`Failed to save session ${sessionId} to Redis:`, error);
+    }
   }
 
   /**
@@ -212,7 +248,7 @@ export class SessionRepository {
     });
 
     // Store QR in Redis with TTL
-    await this.redis.setex(
+    await this.redis.setEx(
       `${this.qrPrefix}${sessionId}`,
       120, // 2 minutes TTL
       JSON.stringify({ qr, qrDataUrl, timestamp: new Date().toISOString() })
@@ -252,28 +288,6 @@ export class SessionRepository {
     );
 
     return updated;
-  }
-
-  /**
-   * Persist session to Redis
-   */
-  async persistToRedis(sessionId, session) {
-    try {
-      // Remove any non-serializable properties
-      const serializable = JSON.parse(JSON.stringify(session));
-      
-      await this.redis.set(
-        `${this.sessionPrefix}${sessionId}`,
-        JSON.stringify(serializable)
-      );
-      
-      // Set expiration (24 hours)
-      await this.redis.expire(`${this.sessionPrefix}${sessionId}`, 86400);
-      
-    } catch (error) {
-      logger.error(`Failed to persist session ${sessionId} to Redis:`, error.message);
-      throw error;
-    }
   }
 
   /**

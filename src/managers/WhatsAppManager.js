@@ -58,10 +58,7 @@ class WhatsAppManager extends EventEmitter {
           ],
           executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         },
-        webVersionCache: {
-          type: 'remote',
-          remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1026262213.html',
-        },
+        // Remove webVersionCache to use latest WhatsApp Web version
       });
       
       // Setup event handlers
@@ -467,6 +464,13 @@ class WhatsAppManager extends EventEmitter {
       ...state,
       connected: client ? client.info?.pushname !== undefined : false,
     };
+  }
+  
+  /**
+   * Get session state (alias for getSessionStatus)
+   */
+  getSessionState(sessionId) {
+    return this.getSessionStatus(sessionId);
   }
   
   /**

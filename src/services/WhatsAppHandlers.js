@@ -55,7 +55,7 @@ async function storeQRAndEmit(context) {
       qrData: qr,
       qrDataUrl: qrDataUrl || null,
     });
-    await redis.setex(`qr:${sessionId}`, 120, qrData);
+    await redis.setEx(`qr:${sessionId}`, 120, qrData);
 
     // Emit socket event if io is available
     const { io } = manager || {};

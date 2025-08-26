@@ -1,7 +1,6 @@
 /**
  * WhatsApp Manager
- * Enterprise-grade WhatsApp session management with clean architecture
- * Implements Repository Pattern, DTOs, and proper separation of concerns
+ * Production-ready WhatsApp session management with improved reliability
  */
 
 import EventEmitter from 'events';
@@ -95,7 +94,20 @@ class WhatsAppManagerV2 extends EventEmitter {
    * Returns a clean DTO without any circular references
    */
   async createSession(userId, plubotId) {
+    // Validate required parameters
+    if (!userId || userId === 'undefined' || !plubotId || plubotId === 'undefined') {
+      logger.error(`Invalid session parameters: userId=${userId}, plubotId=${plubotId}`);
+      return SessionCreateResponseDTO.failure('userId and plubotId are required and cannot be undefined');
+    }
+    
     const sessionId = `${userId}-${plubotId}`;
+    
+    // Check if session already exists
+    const existing = await this.getSession(sessionId);
+    if (existing && existing.status !== 'error') {
+      logger.info(`Session ${sessionId} already exists`);
+      return SessionCreateResponseDTO.success(existing);
+    }
     
     return this.circuitBreaker.execute(async () => {
       try {
@@ -104,13 +116,13 @@ class WhatsAppManagerV2 extends EventEmitter {
         // Use repository to create session (handles all complexity)
         const sessionDTO = await this.repository.create(userId, plubotId);
         
-        // Get the actual client from session manager (for internal use only)
-        const client = this.sessionManager.getClient(sessionId);
-        if (client) {
-          this.clients.set(sessionId, client);
+        // Get the actual session from session manager (for internal use only)
+        const session = this.sessionManager.clients.get(sessionId);
+        if (session && session.client) {
+          this.clients.set(sessionId, session.client);
           
           // Setup event handlers
-          await this.setupSessionHandlers(sessionId, client);
+          await this.setupSessionHandlers(sessionId, session.client);
         }
         
         // Update metrics
@@ -401,6 +413,39 @@ class WhatsAppManagerV2 extends EventEmitter {
         logger.error('Failed to clean up stale sessions:', error);
       }
     }, 3600000); // 1 hour
+  }
+
+  /**
+   * Get session state (for API compatibility)
+   */
+  async getSessionState(sessionId) {
+    try {
+      const session = await this.getSession(sessionId);
+      
+      if (!session) {
+        return { status: 'not_found' };
+      }
+      
+      return {
+        status: session.status || 'initializing',
+        phoneNumber: session.phoneNumber || null,
+        lastActivity: session.lastActivity || null,
+        createdAt: session.createdAt,
+        isReady: session.isReady || false,
+        isAuthenticated: session.isAuthenticated || false,
+        pushname: session.pushname || null
+      };
+    } catch (error) {
+      logger.error(`Error getting session state for ${sessionId}:`, error);
+      return { status: 'not_found' };
+    }
+  }
+
+  /**
+   * Get session status (alias for getSessionState)
+   */
+  async getSessionStatus(sessionId) {
+    return this.getSessionState(sessionId);
   }
 
   /**

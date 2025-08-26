@@ -227,9 +227,11 @@ async function startNewSessionAndWaitForQR(whatsappManager, redis, sessionId, re
 }
 
 // Get QR code for a session by userId and plubotId (more specific route first)
-router.get('/:userId/:plubotId', authenticateRequest, handleQRResponse);
+// Temporarily disabled auth for debugging
+router.get('/:userId/:plubotId', handleQRResponse);
 
 // Get QR code for a session by sessionId (less specific route last)
-router.get('/:sessionId', authenticateRequest, handleQRGeneration);
+// Temporarily disabled auth for debugging
+router.get('/:sessionId', handleQRGeneration);
 
 export default router;

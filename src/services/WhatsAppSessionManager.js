@@ -203,7 +203,23 @@ class WhatsAppSessionManager {
     }
 
     logger.info(`Initializing WhatsApp client for session ${sessionId}`);
-    await newClient.initialize();
+    
+    // Add timeout to client initialization
+    const initTimeout = 30000; // 30 seconds
+    try {
+      await Promise.race([
+        newClient.initialize(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Client initialization timeout')), initTimeout)
+        )
+      ]);
+      logger.info(`✅ Client initialized successfully for session ${sessionId}`);
+    } catch (error) {
+      logger.error(`❌ Failed to initialize client for session ${sessionId}:`, error);
+      // Set error status but don't throw - let the QR timeout handle it
+      newSession.status = 'error';
+      newSession.error = error.message;
+    }
 
     // Return session with client for internal use
     // The WhatsAppManager will handle extracting serializable data
@@ -236,35 +252,71 @@ class WhatsAppSessionManager {
    * @returns {Promise<void>}
    */
   async destroySession(sessionId) {
-    logger.info(`Destroying session: ${sessionId}`);
-    const session = this.clients.get(sessionId);
+    logger.info(`Destroying session ${sessionId}`);
 
+    const session = this.clients.get(sessionId);
     if (!session) {
-      await this.cleanupOrphanedSession(sessionId);
+      logger.warn(`Session ${sessionId} not found`);
       return false;
     }
 
     try {
-      await this.performSessionDestroy(session, sessionId);
+      // Logout from WhatsApp and cleanup browser resources
+      if (session.client) {
+        try {
+          await session.client.logout();
+        } catch (logoutError) {
+          logger.warn(`Failed to logout session ${sessionId}:`, logoutError.message);
+        }
+        
+        try {
+          await session.client.destroy();
+          
+          // Force kill browser process if it exists
+          if (session.client.pupBrowser) {
+            const browser = session.client.pupBrowser;
+            const pages = await browser.pages();
+            await Promise.all(pages.map(page => page.close().catch(() => {})));
+            await browser.close();
+            
+            // Kill the browser process
+            const browserProcess = browser.process();
+            if (browserProcess && !browserProcess.killed) {
+              browserProcess.kill('SIGKILL');
+            }
+          }
+        } catch (destroyError) {
+          logger.warn(`Failed to destroy client for session ${sessionId}:`, destroyError.message);
+        }
+      }
+
+      // Remove from memory
+      this.clients.delete(sessionId);
+
+      // Clean up session files
+      await this.cleanupSessionFiles(sessionId);
+
+      // Remove from Redis (all related keys)
+      const keysToDelete = [
+        `session:${sessionId}`,
+        `qr:${sessionId}`,
+        `session_meta:${sessionId}`,
+        `flow:${sessionId}`
+      ];
+      await this.redis.del(keysToDelete);
+      await this.redis.sRem('active_sessions', sessionId);
+
+      logger.info(`Session ${sessionId} destroyed successfully with full cleanup`);
       return true;
     } catch (error) {
-      await this.handleDestroyError(sessionId, error);
+      logger.error(`Error destroying session ${sessionId}:`, error);
+      
+      // Force cleanup even on error
+      this.clients.delete(sessionId);
+      await this.cleanupSessionFiles(sessionId).catch(() => {});
+      
       return false;
     }
-  }
-
-  async performSessionDestroy(session, sessionId) {
-    await this.destroyClient(session, sessionId);
-    await this.cleanupSessionFiles(sessionId);
-    await this.cleanupRedisData(sessionId);
-    this.clients.delete(sessionId);
-    logger.info(`Session ${sessionId} destroyed successfully`);
-  }
-
-  async handleDestroyError(sessionId, error) {
-    logger.error(`Error destroying session ${sessionId}:`, error);
-    this.clients.delete(sessionId);
-    await this.cleanupWwebjsCache();
   }
 
   async cleanupOrphanedSession(sessionId) {

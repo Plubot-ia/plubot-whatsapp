@@ -21,6 +21,13 @@ import { CircuitBreakerFactory } from './middleware/CircuitBreaker.js';
 
 // Managers
 import WhatsAppManager from './managers/WhatsAppManager.js';
+import ImprovedWhatsAppManager from './managers/ImprovedWhatsAppManager.js';
+
+// Routes
+import sessionsRouter from './routes/sessions.js';
+import qrRouter from './routes/qr.js';
+import messagesRouter from './routes/messages.js';
+import flowRoutes from './routes/flow.js';
 
 // Utils
 import logger from './utils/logger.js';
@@ -177,7 +184,7 @@ class EnterpriseWhatsAppServer {
     this.rateLimiter = new TieredRateLimiter();
     
     // WhatsApp Manager with enterprise features
-    this.whatsappManager = new WhatsAppManager({
+    const whatsappManager = new WhatsAppManager({
       sessionPool: this.sessionPool,
       messageQueue: this.messageQueue,
       sessionReconnector: this.sessionReconnector,
@@ -280,10 +287,10 @@ class EnterpriseWhatsAppServer {
     
     // CORS
     this.app.use(cors({
-      origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'],
+      origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000', 'http://localhost:5174', 'http://localhost:5173'],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'x-api-key'],
     }));
     
     // Compression
@@ -338,6 +345,12 @@ class EnterpriseWhatsAppServer {
     // Health check routes
     this.app.use(this.healthChecker.routes());
     
+    // Register imported routes
+    this.app.use('/api/sessions', sessionsRouter);
+    this.app.use('/api/qr', qrRouter);
+    this.app.use('/api/messages', messagesRouter);
+    this.app.use('/api/flow', flowRoutes);
+    
     // Metrics endpoint
     this.app.get('/metrics', async (req, res) => {
       try {
@@ -350,7 +363,7 @@ class EnterpriseWhatsAppServer {
       }
     });
     
-    // Session management
+    // Session management (legacy endpoint - keep for backward compatibility)
     router.post('/session/create', async (req, res) => {
       try {
         const { sessionId } = req.body;
