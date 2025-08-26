@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+
+# Cache
+.cache/
+.eslintcache
+.ruff_cache/
+
+# Sessions and data
+sessions/
+.wwebjs_cache/
+.wwebjs_auth/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Documentation
+docs/
+*.md

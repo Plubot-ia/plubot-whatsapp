@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+out/
+
+# Cache
+.cache/
+.ruff_cache/
+
+# Sessions
+sessions/
+.wwebjs_cache/
+.wwebjs_auth/
+
+# Logs
+*.log
+
+# Environment
+.env*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Documentation
+*.md

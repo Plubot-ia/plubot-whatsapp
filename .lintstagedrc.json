@@ -1,0 +1,10 @@
+{
+  "*.{js,mjs}": [
+    "eslint --fix --max-warnings 0",
+    "prettier --write",
+    "npm run security:check-file"
+  ],
+  "*.{json,md,yml,yaml}": [
+    "prettier --write"
+  ]
+}
