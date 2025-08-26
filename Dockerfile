@@ -61,7 +61,8 @@ ENV NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=2048"
 
 # Create necessary directories with proper permissions
-RUN mkdir -p sessions logs .wwebjs_cache && \
+RUN rm -rf sessions logs .wwebjs_cache && \
+    mkdir -p sessions logs .wwebjs_cache && \
     chown -R nodejs:nodejs sessions logs .wwebjs_cache
 
 # Switch to non-root user
