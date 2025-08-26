@@ -2,7 +2,7 @@ import axios from 'axios';
 
 import logger from './logger.js';
 
-const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://localhost:5000';
+const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:5000';
 const PYTHON_API_KEY = process.env.PYTHON_API_KEY || 'internal-api-key';
 
 /**

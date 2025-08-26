@@ -16,7 +16,7 @@ export function authenticateRequest(req, res, next) {
 
   const apiKey = req.headers['x-api-key'];
   const validApiKey = process.env.API_KEY;
-  const internalApiKey = 'internal-api-key';
+  const internalApiKey = process.env.PYTHON_API_KEY || 'internal-api-key';
 
   if (!apiKey) {
     logger.warn('No API key provided');

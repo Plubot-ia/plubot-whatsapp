@@ -35,7 +35,7 @@ setTimeout(async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': 'internal-api-key',
+        'x-api-key': process.env.PYTHON_API_KEY || 'internal-api-key',
       },
       body: JSON.stringify({ test: 'data' }),
     });
