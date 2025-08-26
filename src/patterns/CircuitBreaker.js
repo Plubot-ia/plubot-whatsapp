@@ -8,8 +8,8 @@ class CircuitBreaker {
   constructor(options = {}) {
     this.name = options.name || 'CircuitBreaker';
     this.failureThreshold = options.failureThreshold || 5;
-    this.resetTimeout = options.resetTimeout || 60000; // 1 minute
-    this.monitoringPeriod = options.monitoringPeriod || 10000; // 10 seconds
+    this.resetTimeout = options.resetTimeout || 60_000; // 1 minute
+    this.monitoringPeriod = options.monitoringPeriod || 10_000; // 10 seconds
     this.state = 'CLOSED'; // CLOSED, OPEN, HALF_OPEN
     this.failures = 0;
     this.successes = 0;
@@ -20,14 +20,14 @@ class CircuitBreaker {
       failedRequests: 0,
       successfulRequests: 0,
       rejectedRequests: 0,
-      stateChanges: []
+      stateChanges: [],
     };
   }
 
   /**
    * Execute a function with circuit breaker protection
    */
-  async execute(fn, fallback = null) {
+  async execute(function_, fallback = null) {
     this.metrics.totalRequests++;
 
     // Check circuit state
@@ -35,20 +35,20 @@ class CircuitBreaker {
       if (Date.now() < this.nextAttempt) {
         this.metrics.rejectedRequests++;
         logger.warn(`⚡ Circuit breaker ${this.name} is OPEN, rejecting request`);
-        
+
         if (fallback) {
           return fallback();
         }
-        
+
         throw new Error(`Circuit breaker ${this.name} is OPEN`);
       }
-      
+
       // Try half-open state
       this.setState('HALF_OPEN');
     }
 
     try {
-      const result = await this.callWithTimeout(fn);
+      const result = await this.callWithTimeout(function_);
       this.onSuccess();
       return result;
     } catch (error) {
@@ -60,12 +60,10 @@ class CircuitBreaker {
   /**
    * Call function with timeout protection
    */
-  async callWithTimeout(fn, timeout = 30000) {
+  async callWithTimeout(function_, timeout = 30_000) {
     return Promise.race([
-      fn(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Operation timeout')), timeout)
-      )
+      function_(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), timeout)),
     ]);
   }
 
@@ -74,10 +72,10 @@ class CircuitBreaker {
    */
   onSuccess() {
     this.metrics.successfulRequests++;
-    
+
     if (this.state === 'HALF_OPEN') {
       this.successes++;
-      
+
       // Need multiple successes to fully close
       if (this.successes >= 3) {
         this.setState('CLOSED');
@@ -97,7 +95,7 @@ class CircuitBreaker {
   onFailure(error) {
     this.metrics.failedRequests++;
     this.lastFailureTime = Date.now();
-    
+
     if (this.state === 'HALF_OPEN') {
       // Immediately open on failure in half-open state
       this.setState('OPEN');
@@ -105,14 +103,14 @@ class CircuitBreaker {
       logger.error(`❌ Circuit breaker ${this.name} reopened due to failure in HALF_OPEN state`);
     } else if (this.state === 'CLOSED') {
       this.failures++;
-      
+
       if (this.failures >= this.failureThreshold) {
         this.setState('OPEN');
         this.nextAttempt = Date.now() + this.resetTimeout;
         logger.error(`❌ Circuit breaker ${this.name} opened after ${this.failures} failures`);
       }
     }
-    
+
     logger.error(`Circuit breaker ${this.name} failure:`, error.message);
   }
 
@@ -122,13 +120,13 @@ class CircuitBreaker {
   setState(newState) {
     const oldState = this.state;
     this.state = newState;
-    
+
     this.metrics.stateChanges.push({
       from: oldState,
       to: newState,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-    
+
     logger.info(`🔄 Circuit breaker ${this.name} state changed: ${oldState} -> ${newState}`);
   }
 
@@ -143,7 +141,7 @@ class CircuitBreaker {
       successes: this.successes,
       lastFailureTime: this.lastFailureTime,
       nextAttempt: this.state === 'OPEN' ? this.nextAttempt : null,
-      metrics: this.metrics
+      metrics: this.metrics,
     };
   }
 

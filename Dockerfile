@@ -1,6 +1,8 @@
 # Multi-stage build for optimized production image
-# Stage 1: Dependencies
-FROM node:20-alpine AS deps
+# Cache busting comment - Update timestamp to force rebuild
+# Last update: 2025-08-26T18:52:00Z
+# Force rebuild: ES module fixes applied
+FROM node:20-alpine AS dependencies
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -9,8 +11,8 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Copy dependency files
-COPY package*.json ./
-RUN npm ci --only=production
+COPY package.json ./
+RUN npm install --omit=dev
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder
@@ -21,8 +23,8 @@ WORKDIR /app
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Copy dependencies from deps stage
-COPY --from=deps /app/node_modules ./node_modules
+# Copy dependencies from dependencies stage
+COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 
 # Build if needed (for TypeScript, etc)
@@ -49,11 +51,8 @@ RUN addgroup -g 1001 -S nodejs && \
 
 WORKDIR /app
 
-# Copy dependencies from builder
-COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
-
-# Copy application code
-COPY --chown=nodejs:nodejs . .
+# Copy everything from builder stage (includes node_modules and all source files)
+COPY --from=builder --chown=nodejs:nodejs /app ./
 
 # Set environment variables
 ENV NODE_ENV=production \

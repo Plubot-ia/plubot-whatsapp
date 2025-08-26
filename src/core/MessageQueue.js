@@ -1,5 +1,6 @@
 import Bull from 'bull';
 import IORedis from 'ioredis';
+
 import logger from '../utils/logger.js';
 
 /**
@@ -25,7 +26,7 @@ export class MessageQueueSystem {
       },
       ...config,
     };
-    
+
     this.queues = {};
     this.processors = new Map();
     this.metrics = {
@@ -34,47 +35,47 @@ export class MessageQueueSystem {
       retried: 0,
       dlq: 0,
     };
-    
+
     this._initializeQueues();
   }
-  
+
   /**
    * Initialize all message queues
    */
   _initializeQueues() {
-    const redisOpts = {
+    const redisOptions = {
       redis: this.config.redis,
     };
-    
+
     // Create queues
-    Object.entries(this.config.queues).forEach(([name, queueName]) => {
-      this.queues[name] = new Bull(queueName, redisOpts);
-      
+    for (const [name, queueName] of Object.entries(this.config.queues)) {
+      this.queues[name] = new Bull(queueName, redisOptions);
+
       // Set up event listeners
       this.queues[name].on('completed', (job) => {
         this.metrics.processed++;
         logger.debug(`Job ${job.id} completed in queue ${name}`);
       });
-      
+
       this.queues[name].on('failed', (job, error) => {
         this.metrics.failed++;
         logger.error(`Job ${job.id} failed in queue ${name}:`, error);
-        
+
         // Move to DLQ after max retries
         if (job.attemptsMade >= (job.opts.attempts || 3)) {
           this._moveToDeadLetterQueue(job, error);
         }
       });
-      
+
       this.queues[name].on('stalled', (job) => {
         logger.warn(`Job ${job.id} stalled in queue ${name}`);
       });
-    });
-    
+    }
+
     // Set up queue processors
     this._setupProcessors();
   }
-  
+
   /**
    * Set up message processors
    */
@@ -82,51 +83,49 @@ export class MessageQueueSystem {
     // Incoming message processor
     this.queues.incoming.process(50, async (job) => {
       const { sessionId, message, timestamp } = job.data;
-      
+
       try {
         // Add processing logic here
         const processor = this.processors.get('incoming');
         if (processor) {
           await processor(job.data);
         }
-        
+
         // Track metrics
         await this._updateMetrics('incoming', {
           sessionId,
           timestamp,
           processingTime: Date.now() - timestamp,
         });
-        
+
         return { success: true, processedAt: Date.now() };
-        
       } catch (error) {
-        logger.error(`Failed to process incoming message:`, error);
+        logger.error('Failed to process incoming message:', error);
         throw error;
       }
     });
-    
+
     // Outgoing message processor with rate limiting
     this.queues.outgoing.process(30, async (job) => {
       const { sessionId, recipient, message, options = {} } = job.data;
-      
+
       try {
         // Apply rate limiting
         await this._checkRateLimit(sessionId, recipient);
-        
+
         const processor = this.processors.get('outgoing');
         if (processor) {
           const result = await processor(job.data);
-          
+
           // Update delivery status
           await this.queues.status.add({
             messageId: result.messageId,
             status: 'sent',
             timestamp: Date.now(),
           });
-          
+
           return result;
         }
-        
       } catch (error) {
         if (error.code === 'RATE_LIMIT') {
           // Retry with backoff
@@ -135,28 +134,28 @@ export class MessageQueueSystem {
         throw error;
       }
     });
-    
+
     // Media processor with optimized handling
     this.queues.media.process(10, async (job) => {
       const { sessionId, media, recipient } = job.data;
-      
+
       try {
         // Process media with size limits and optimization
-        if (media.size > 16 * 1024 * 1024) { // 16MB limit
+        if (media.size > 16 * 1024 * 1024) {
+          // 16MB limit
           throw new Error('Media file too large');
         }
-        
+
         const processor = this.processors.get('media');
         if (processor) {
           return await processor(job.data);
         }
-        
       } catch (error) {
-        logger.error(`Failed to process media:`, error);
+        logger.error('Failed to process media:', error);
         throw error;
       }
     });
-    
+
     // Priority queue for important messages
     this.queues.priority.process(100, async (job) => {
       const processor = this.processors.get('priority');
@@ -165,7 +164,7 @@ export class MessageQueueSystem {
       }
     });
   }
-  
+
   /**
    * Add message to queue
    */
@@ -179,30 +178,30 @@ export class MessageQueueSystem {
       removeOnComplete: 100,
       removeOnFail: 50,
     };
-    
+
     const job = await this.queues[queue].add(data, {
       ...defaultOptions,
       ...options,
     });
-    
+
     logger.debug(`Added job ${job.id} to queue ${queue}`);
     return job;
   }
-  
+
   /**
    * Add bulk messages
    */
   async addBulkMessages(queue, messages, options = {}) {
-    const jobs = messages.map(data => ({
+    const jobs = messages.map((data) => ({
       data,
       opts: options,
     }));
-    
+
     const results = await this.queues[queue].addBulk(jobs);
     logger.info(`Added ${results.length} jobs to queue ${queue}`);
     return results;
   }
-  
+
   /**
    * Register message processor
    */
@@ -210,31 +209,30 @@ export class MessageQueueSystem {
     this.processors.set(type, processor);
     logger.info(`Registered processor for ${type}`);
   }
-  
+
   /**
    * Check rate limits
    */
   async _checkRateLimit(sessionId, recipient) {
     const key = `ratelimit:${sessionId}:${recipient}`;
     const redis = new IORedis(this.config.redis);
-    
+
     try {
       const count = await redis.incr(key);
-      
+
       if (count === 1) {
         await redis.expire(key, 60); // 1 minute window
       }
-      
+
       const limit = 30; // 30 messages per minute per recipient
       if (count > limit) {
         throw { code: 'RATE_LIMIT', message: 'Rate limit exceeded' };
       }
-      
     } finally {
       redis.disconnect();
     }
   }
-  
+
   /**
    * Move failed job to Dead Letter Queue
    */
@@ -247,17 +245,17 @@ export class MessageQueueSystem {
       failedAt: Date.now(),
       attempts: job.attemptsMade,
     });
-    
+
     this.metrics.dlq++;
     logger.warn(`Moved job ${job.id} to DLQ`);
   }
-  
+
   /**
    * Update queue metrics
    */
   async _updateMetrics(queue, data) {
     const redis = new IORedis(this.config.redis);
-    
+
     try {
       const key = `metrics:${queue}:${new Date().toISOString().split('T')[0]}`;
       await redis.hincrby(key, 'count', 1);
@@ -267,13 +265,13 @@ export class MessageQueueSystem {
       redis.disconnect();
     }
   }
-  
+
   /**
    * Get queue statistics
    */
   async getQueueStats() {
     const stats = {};
-    
+
     for (const [name, queue] of Object.entries(this.queues)) {
       const counts = await queue.getJobCounts();
       stats[name] = {
@@ -282,33 +280,33 @@ export class MessageQueueSystem {
         failed: await queue.getFailedCount(),
       };
     }
-    
+
     return {
       queues: stats,
       metrics: this.metrics,
     };
   }
-  
+
   /**
    * Clean old jobs
    */
-  async cleanQueues(grace = 3600000) {
+  async cleanQueues(grace = 3_600_000) {
     const cleaned = {};
-    
+
     for (const [name, queue] of Object.entries(this.queues)) {
       const completedJobs = await queue.clean(grace, 'completed');
       const failedJobs = await queue.clean(grace, 'failed');
-      
+
       cleaned[name] = {
         completed: completedJobs.length,
         failed: failedJobs.length,
       };
     }
-    
+
     logger.info('Cleaned old jobs:', cleaned);
     return cleaned;
   }
-  
+
   /**
    * Get queue statistics
    */
@@ -317,15 +315,15 @@ export class MessageQueueSystem {
       queues: {},
       metrics: this.metrics,
     };
-    
+
     for (const [name, queue] of Object.entries(this.queues)) {
       const counts = await queue.getJobCounts();
       stats.queues[name] = counts;
     }
-    
+
     return stats;
   }
-  
+
   /**
    * Pause queue processing
    */
@@ -335,7 +333,7 @@ export class MessageQueueSystem {
       logger.info(`Queue ${queueName} paused`);
     }
   }
-  
+
   /**
    * Resume queue processing
    */
@@ -345,16 +343,16 @@ export class MessageQueueSystem {
       logger.info(`Queue ${queueName} resumed`);
     }
   }
-  
+
   /**
    * Shutdown all queues
    */
   async shutdown() {
     logger.info('Shutting down MessageQueueSystem...');
-    
-    const closePromises = Object.values(this.queues).map(queue => queue.close());
+
+    const closePromises = Object.values(this.queues).map((queue) => queue.close());
     await Promise.all(closePromises);
-    
+
     logger.info('MessageQueueSystem shutdown complete');
   }
 }

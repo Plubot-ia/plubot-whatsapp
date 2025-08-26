@@ -21,7 +21,7 @@ class RedisClient {
       const redisHost = process.env.REDIS_HOST || 'localhost';
       const redisPort = process.env.REDIS_PORT || 6379;
       const redisPassword = process.env.REDIS_PASSWORD || undefined;
-      
+
       this.client = new Redis({
         host: redisHost,
         port: redisPort,

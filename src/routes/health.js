@@ -1,4 +1,5 @@
 import express from 'express';
+
 import logger from '../utils/logger.js';
 
 const router = express.Router();
@@ -6,27 +7,27 @@ const router = express.Router();
 // Health check endpoint
 router.get('/', async (req, res) => {
   try {
-    const whatsappManager = req.app.locals.whatsappManager;
-    
+    const { whatsappManager } = req.app.locals;
+
     if (whatsappManager?.healthCheckService) {
       return whatsappManager.healthCheckService.middleware()(req, res);
     }
-    
+
     // Basic health check
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-      service: 'plubot-whatsapp'
+      service: 'plubot-whatsapp',
     };
-    
+
     res.json(health);
   } catch (error) {
     logger.error('Health check failed:', error);
     res.status(503).json({
       status: 'unhealthy',
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -34,8 +35,8 @@ router.get('/', async (req, res) => {
 // Detailed health check
 router.get('/detailed', async (req, res) => {
   try {
-    const whatsappManager = req.app.locals.whatsappManager;
-    
+    const { whatsappManager } = req.app.locals;
+
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
@@ -45,43 +46,43 @@ router.get('/detailed', async (req, res) => {
       components: {
         redis: 'unknown',
         whatsapp: 'unknown',
-        websocket: 'unknown'
-      }
+        websocket: 'unknown',
+      },
     };
-    
+
     // Check Redis
     try {
-      const redis = req.app.locals.redis;
+      const { redis } = req.app.locals;
       if (redis) {
         await redis.ping();
         health.components.redis = 'healthy';
       }
-    } catch (error) {
+    } catch {
       health.components.redis = 'unhealthy';
       health.status = 'degraded';
     }
-    
+
     // Check WhatsApp sessions
     if (whatsappManager?.sessionPool) {
       const stats = whatsappManager.sessionPool.getStatistics();
       health.components.whatsapp = stats.active > 0 ? 'healthy' : 'idle';
       health.sessions = stats;
     }
-    
+
     // Check WebSocket
     if (whatsappManager?.io) {
       health.components.websocket = 'healthy';
       health.websocket = {
-        connected: whatsappManager.io.sockets.sockets.size
+        connected: whatsappManager.io.sockets.sockets.size,
       };
     }
-    
+
     res.json(health);
   } catch (error) {
     logger.error('Detailed health check failed:', error);
     res.status(503).json({
       status: 'unhealthy',
-      error: error.message
+      error: error.message,
     });
   }
 });

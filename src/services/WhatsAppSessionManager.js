@@ -7,8 +7,8 @@ const { Client, LocalAuth } = pkg;
 
 import logger from '../utils/logger.js';
 
-import { setupHandlers } from './WhatsAppHandlers.js';
 import { EnhancedWhatsAppHandlers } from './EnhancedWhatsAppHandlers.js';
+import { setupHandlers } from './WhatsAppHandlers.js';
 
 const DEFAULT_PUPPETEER_ARGS = [
   '--no-sandbox',
@@ -67,12 +67,12 @@ class WhatsAppSessionManager {
       headless: true,
       args: DEFAULT_PUPPETEER_ARGS,
     };
-    
+
     // Use the Chrome executable path from environment if available (for Docker)
     if (process.env.PUPPETEER_EXECUTABLE_PATH) {
       puppeteerConfig.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     }
-    
+
     return new Client({
       authStrategy: new LocalAuth({
         clientId: sessionId,
@@ -108,9 +108,9 @@ class WhatsAppSessionManager {
           qrDataUrl: this.qrDataUrl,
           error: this.error,
           connectionState: this.connectionState,
-          createdAt: this.createdAt
+          createdAt: this.createdAt,
         };
-      }
+      },
     };
   }
 
@@ -148,7 +148,7 @@ class WhatsAppSessionManager {
 
     // Create and initialize new session
     const session = await this.initializeNewSession(sessionId);
-    
+
     // Return session without client to avoid circular reference
     const { client, ...sessionWithoutClient } = session;
     return sessionWithoutClient;
@@ -194,7 +194,7 @@ class WhatsAppSessionManager {
 
     this.clients.set(sessionId, newSession);
     logger.info(`Setting up handlers for session ${sessionId}`);
-    
+
     // Use enhanced handlers if available
     if (this.manager.enhancedHandlers) {
       this.manager.enhancedHandlers.setupHandlers(newClient, sessionId, newSession);
@@ -203,15 +203,15 @@ class WhatsAppSessionManager {
     }
 
     logger.info(`Initializing WhatsApp client for session ${sessionId}`);
-    
+
     // Add timeout to client initialization
-    const initTimeout = 30000; // 30 seconds
+    const initTimeout = 30_000; // 30 seconds
     try {
       await Promise.race([
         newClient.initialize(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Client initialization timeout')), initTimeout)
-        )
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Client initialization timeout')), initTimeout),
+        ),
       ]);
       logger.info(`✅ Client initialized successfully for session ${sessionId}`);
     } catch (error) {
@@ -268,17 +268,17 @@ class WhatsAppSessionManager {
         } catch (logoutError) {
           logger.warn(`Failed to logout session ${sessionId}:`, logoutError.message);
         }
-        
+
         try {
           await session.client.destroy();
-          
+
           // Force kill browser process if it exists
           if (session.client.pupBrowser) {
             const browser = session.client.pupBrowser;
             const pages = await browser.pages();
-            await Promise.all(pages.map(page => page.close().catch(() => {})));
+            await Promise.all(pages.map((page) => page.close().catch(() => {})));
             await browser.close();
-            
+
             // Kill the browser process
             const browserProcess = browser.process();
             if (browserProcess && !browserProcess.killed) {
@@ -301,7 +301,7 @@ class WhatsAppSessionManager {
         `session:${sessionId}`,
         `qr:${sessionId}`,
         `session_meta:${sessionId}`,
-        `flow:${sessionId}`
+        `flow:${sessionId}`,
       ];
       await this.redis.del(keysToDelete);
       await this.redis.sRem('active_sessions', sessionId);
@@ -310,11 +310,11 @@ class WhatsAppSessionManager {
       return true;
     } catch (error) {
       logger.error(`Error destroying session ${sessionId}:`, error);
-      
+
       // Force cleanup even on error
       this.clients.delete(sessionId);
       await this.cleanupSessionFiles(sessionId).catch(() => {});
-      
+
       return false;
     }
   }

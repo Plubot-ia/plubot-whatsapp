@@ -9,10 +9,6 @@ import logger from '../utils/logger.js';
  */
 export function authenticateRequest(req, res, next) {
   logger.info('Auth middleware called');
-  
-  // TEMPORARILY DISABLED FOR DEBUGGING
-  logger.info('Auth temporarily disabled for debugging');
-  return next();
 
   const apiKey = req.headers['x-api-key'];
   const validApiKey = process.env.API_KEY;

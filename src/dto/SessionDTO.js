@@ -27,7 +27,7 @@ export class SessionDTO {
       messagesSent: session.messagesSent || 0,
       reconnections: session.reconnections || 0,
       uptime: session.uptime || 0,
-      lastError: session.lastError || null
+      lastError: session.lastError || null,
     };
   }
 
@@ -38,7 +38,7 @@ export class SessionDTO {
 
   static fromSessionList(sessions) {
     if (!Array.isArray(sessions)) return [];
-    return sessions.map(session => SessionDTO.fromSession(session));
+    return sessions.map((session) => SessionDTO.fromSession(session));
   }
 
   toJSON() {
@@ -56,7 +56,7 @@ export class SessionDTO {
       qrDataUrl: this.qrDataUrl,
       connectionState: this.connectionState,
       error: this.error,
-      metrics: this.metrics
+      metrics: this.metrics,
     };
   }
 }
@@ -83,7 +83,7 @@ export class SessionCreateResponseDTO {
       success: this.success,
       data: this.data,
       error: this.error,
-      timestamp: this.timestamp
+      timestamp: this.timestamp,
     };
   }
 }
@@ -101,7 +101,7 @@ export class SessionListResponseDTO {
       sessions: this.sessions,
       total: this.total,
       pagination: this.pagination,
-      timestamp: this.timestamp
+      timestamp: this.timestamp,
     };
   }
 }
@@ -109,5 +109,5 @@ export class SessionListResponseDTO {
 export default {
   SessionDTO,
   SessionCreateResponseDTO,
-  SessionListResponseDTO
+  SessionListResponseDTO,
 };

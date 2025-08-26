@@ -10,7 +10,7 @@ class AutoReconnectService {
     this.reconnectAttempts = new Map();
     this.maxAttempts = 5;
     this.baseDelay = 1000; // 1 second
-    this.maxDelay = 30000; // 30 seconds
+    this.maxDelay = 30_000; // 30 seconds
     this.reconnectTimers = new Map();
   }
 
@@ -19,7 +19,7 @@ class AutoReconnectService {
    */
   async handleDisconnection(sessionId, reason) {
     logger.info(`📱 Session ${sessionId} disconnected: ${reason}`);
-    
+
     // Don't reconnect if it was a manual logout
     if (reason === 'LOGOUT' || reason === 'MANUAL') {
       logger.info(`Session ${sessionId} was manually disconnected, skipping reconnection`);
@@ -28,7 +28,7 @@ class AutoReconnectService {
     }
 
     const attempts = this.reconnectAttempts.get(sessionId) || 0;
-    
+
     if (attempts >= this.maxAttempts) {
       logger.error(`❌ Max reconnection attempts reached for ${sessionId}`);
       await this.notifyDisconnectionFailure(sessionId);
@@ -38,7 +38,9 @@ class AutoReconnectService {
 
     // Calculate delay with exponential backoff
     const delay = Math.min(this.baseDelay * Math.pow(2, attempts), this.maxDelay);
-    logger.info(`⏱️ Scheduling reconnection for ${sessionId} in ${delay}ms (attempt ${attempts + 1}/${this.maxAttempts})`);
+    logger.info(
+      `⏱️ Scheduling reconnection for ${sessionId} in ${delay}ms (attempt ${attempts + 1}/${this.maxAttempts})`,
+    );
 
     // Clear any existing timer
     if (this.reconnectTimers.has(sessionId)) {
@@ -65,17 +67,17 @@ class AutoReconnectService {
    */
   async attemptReconnection(sessionId, attemptNumber) {
     logger.info(`🔄 Attempting reconnection ${attemptNumber}/${this.maxAttempts} for ${sessionId}`);
-    
+
     const session = this.manager.getSession(sessionId);
-    
+
     if (!session) {
       // Try to restore from persistence
       const restoredSession = await this.manager.restoreSession(sessionId);
-      
+
       if (!restoredSession) {
         throw new Error(`Session ${sessionId} not found and could not be restored`);
       }
-      
+
       logger.info(`✅ Session ${sessionId} restored from persistence`);
       this.cleanup(sessionId);
       await this.notifyReconnectionSuccess(sessionId);
@@ -95,7 +97,7 @@ class AutoReconnectService {
 
       // Create new client and reinitialize
       const newSession = await this.manager.sessionManager.initializeNewSession(sessionId, session);
-      
+
       if (newSession && newSession.status === 'ready') {
         logger.info(`✅ Successfully reconnected ${sessionId}`);
         this.cleanup(sessionId);
@@ -115,7 +117,7 @@ class AutoReconnectService {
       this.manager.io.to(`qr-${sessionId}`).emit('session-reconnected', {
         sessionId,
         status: 'connected',
-        message: 'Session reconnected successfully'
+        message: 'Session reconnected successfully',
       });
     }
 
@@ -124,7 +126,7 @@ class AutoReconnectService {
       await this.manager.persistenceService.persistSession(sessionId, {
         status: 'ready',
         isReady: true,
-        lastActive: Date.now()
+        lastActive: Date.now(),
       });
     }
   }
@@ -137,7 +139,7 @@ class AutoReconnectService {
       this.manager.io.to(`qr-${sessionId}`).emit('session-disconnection-failed', {
         sessionId,
         status: 'disconnected',
-        message: 'Could not reconnect after multiple attempts. Please scan QR code again.'
+        message: 'Could not reconnect after multiple attempts. Please scan QR code again.',
       });
     }
 
@@ -150,7 +152,7 @@ class AutoReconnectService {
    */
   cleanup(sessionId) {
     this.reconnectAttempts.delete(sessionId);
-    
+
     if (this.reconnectTimers.has(sessionId)) {
       clearTimeout(this.reconnectTimers.get(sessionId));
       this.reconnectTimers.delete(sessionId);
@@ -172,7 +174,7 @@ class AutoReconnectService {
     return {
       attempts: this.reconnectAttempts.get(sessionId) || 0,
       maxAttempts: this.maxAttempts,
-      isReconnecting: this.reconnectTimers.has(sessionId)
+      isReconnecting: this.reconnectTimers.has(sessionId),
     };
   }
 }

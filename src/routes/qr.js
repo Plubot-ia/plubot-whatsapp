@@ -198,7 +198,7 @@ async function startNewSessionAndWaitForQR(whatsappManager, redis, sessionId, re
     const parts = sessionId.split('-');
     if (parts.length >= 2) {
       const userId = parts.slice(0, -1).join('-');
-      const plubotId = parts[parts.length - 1];
+      const plubotId = parts.at(-1);
       await whatsappManager.createSession(userId, plubotId);
     } else {
       // Fall back to using getOrCreateSessionById if available

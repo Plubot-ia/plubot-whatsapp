@@ -1,28 +1,28 @@
-import os from 'os';
+import os from 'node:os';
 
 export const clusterConfig = {
   // Number of worker processes
   workers: process.env.CLUSTER_WORKERS || os.cpus().length,
-  
+
   // Worker restart settings
   maxRestarts: 10,
   restartDelay: 5000,
-  
+
   // Memory limits per worker (MB)
-  maxMemory: parseInt(process.env.WORKER_MAX_MEMORY, 10) || 512,
-  
+  maxMemory: Number.parseInt(process.env.WORKER_MAX_MEMORY, 10) || 512,
+
   // Session distribution strategy
   sessionStrategy: process.env.SESSION_STRATEGY || 'least-connections', // round-robin, least-connections, ip-hash
-  
+
   // Health check interval
-  healthCheckInterval: 30000,
-  
+  healthCheckInterval: 30_000,
+
   // Graceful shutdown timeout
-  shutdownTimeout: 30000,
-  
+  shutdownTimeout: 30_000,
+
   // IPC message timeout
-  ipcTimeout: 10000,
-  
+  ipcTimeout: 10_000,
+
   // Worker settings
   workerSettings: {
     execArgv: ['--max-old-space-size=512'],
@@ -57,7 +57,7 @@ export const queueConfig = {
       delay: 2000,
     },
   },
-  
+
   // Queue concurrency
   concurrency: {
     messages: 50,
@@ -65,7 +65,7 @@ export const queueConfig = {
     status: 100,
     qr: 10,
   },
-  
+
   // Rate limiting per queue
   rateLimits: {
     messages: {
@@ -81,7 +81,7 @@ export const queueConfig = {
 
 export const metricsConfig = {
   enabled: process.env.METRICS_ENABLED !== 'false',
-  port: parseInt(process.env.METRICS_PORT, 10) || 9090,
+  port: Number.parseInt(process.env.METRICS_PORT, 10) || 9090,
   path: '/metrics',
   collectDefaultMetrics: true,
   defaultLabels: {

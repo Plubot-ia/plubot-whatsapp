@@ -4,8 +4,8 @@
  * Handles all session persistence and retrieval operations
  */
 
-import logger from '../utils/logger.js';
 import { SessionDTO } from '../dto/SessionDTO.js';
+import logger from '../utils/logger.js';
 
 export class SessionRepository {
   constructor(redisClient, sessionManager) {
@@ -22,7 +22,7 @@ export class SessionRepository {
    */
   async create(userId, plubotId) {
     const sessionId = `${userId}-${plubotId}`;
-    
+
     try {
       // Check if session already exists
       const existing = await this.findById(sessionId);
@@ -33,17 +33,16 @@ export class SessionRepository {
 
       // Create session entity (domain object)
       const sessionEntity = await this.sessionManager.createSession(sessionId);
-      
+
       // Store in cache (without client reference)
       const cleanSession = this.extractCleanSession(sessionEntity);
       this.sessions.set(sessionId, cleanSession);
-      
+
       // Persist to Redis
       await this.saveToRedis(sessionId, cleanSession);
-      
+
       // Return DTO
       return SessionDTO.fromSession(cleanSession);
-      
     } catch (error) {
       logger.error(`Failed to create session ${sessionId}:`, error.message);
       throw new Error(`Session creation failed: ${error.message}`);
@@ -56,7 +55,7 @@ export class SessionRepository {
   extractCleanSession(sessionEntity) {
     // Never include the client object in the clean session
     const { client, ...cleanData } = sessionEntity;
-    
+
     return {
       sessionId: cleanData.sessionId,
       userId: cleanData.userId || cleanData.sessionId?.split('-')[0],
@@ -74,7 +73,7 @@ export class SessionRepository {
       messagesReceived: cleanData.messagesReceived || 0,
       messagesSent: cleanData.messagesSent || 0,
       reconnections: cleanData.reconnections || 0,
-      uptime: cleanData.uptime || 0
+      uptime: cleanData.uptime || 0,
     };
   }
 
@@ -97,12 +96,12 @@ export class SessionRepository {
       const data = await this.redis.get(key);
       if (data) {
         // Refresh TTL on access
-        await this.redis.expire(key, 86400);
-        
+        await this.redis.expire(key, 86_400);
+
         // Update last accessed time
         const metaKey = `session_meta:${sessionId}`;
         await this.redis.hSet(metaKey, 'lastAccessed', new Date().toISOString());
-        
+
         logger.debug(`Session ${sessionId} retrieved from Redis`);
         return JSON.parse(data);
       }
@@ -127,7 +126,7 @@ export class SessionRepository {
       ...session,
       ...updates,
       updatedAt: new Date().toISOString(),
-      client: undefined // Never include client in stored data
+      client: undefined, // Never include client in stored data
     };
 
     // Update cache
@@ -143,21 +142,21 @@ export class SessionRepository {
     try {
       const key = `session:${sessionId}`;
       // Use setEx for atomic TTL setting
-      await this.redis.setEx(key, 86400, JSON.stringify(data)); // 24 hours TTL
-      
+      await this.redis.setEx(key, 86_400, JSON.stringify(data)); // 24 hours TTL
+
       // Track active sessions
       await this.redis.sAdd('active_sessions', sessionId);
-      
+
       // Store session metadata for quick lookups
       const metaKey = `session_meta:${sessionId}`;
       await this.redis.hSet(metaKey, {
         userId: data.userId || '',
         plubotId: data.plubotId || '',
         status: data.status || 'initializing',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
       });
-      await this.redis.expire(metaKey, 86400);
-      
+      await this.redis.expire(metaKey, 86_400);
+
       logger.debug(`Session ${sessionId} saved to Redis with TTL`);
     } catch (error) {
       logger.error(`Failed to save session ${sessionId} to Redis:`, error);
@@ -198,12 +197,12 @@ export class SessionRepository {
     // Get all sessions from Redis
     try {
       const keys = await this.redis.keys(`${this.sessionPrefix}*`);
-      
+
       for (const key of keys) {
         const data = await this.redis.get(key);
         if (data) {
           const session = JSON.parse(data);
-          
+
           // Apply filters
           if (this.matchesFilter(session, filter)) {
             sessions.push(session);
@@ -244,14 +243,14 @@ export class SessionRepository {
     const updated = await this.update(sessionId, {
       qr,
       qrDataUrl,
-      status: 'waiting_qr'
+      status: 'waiting_qr',
     });
 
     // Store QR in Redis with TTL
     await this.redis.setEx(
       `${this.qrPrefix}${sessionId}`,
       120, // 2 minutes TTL
-      JSON.stringify({ qr, qrDataUrl, timestamp: new Date().toISOString() })
+      JSON.stringify({ qr, qrDataUrl, timestamp: new Date().toISOString() }),
     );
 
     return updated;
@@ -272,7 +271,7 @@ export class SessionRepository {
       messagesSent: metrics.messagesSent || session.messagesSent || 0,
       reconnections: metrics.reconnections || session.reconnections || 0,
       uptime: metrics.uptime || session.uptime || 0,
-      lastError: metrics.lastError || session.lastError || null
+      lastError: metrics.lastError || session.lastError || null,
     };
 
     // Update session
@@ -283,8 +282,8 @@ export class SessionRepository {
       `${this.metricsPrefix}${sessionId}`,
       JSON.stringify({
         ...updatedMetrics,
-        timestamp: new Date().toISOString()
-      })
+        timestamp: new Date().toISOString(),
+      }),
     );
 
     return updated;
@@ -307,23 +306,23 @@ export class SessionRepository {
    */
   async getStatistics() {
     const sessions = await this.findAll();
-    
+
     const stats = {
       total: sessions.length,
       byStatus: {},
       byUser: {},
       authenticated: 0,
       ready: 0,
-      error: 0
+      error: 0,
     };
 
     for (const session of sessions) {
       // Count by status
       stats.byStatus[session.status] = (stats.byStatus[session.status] || 0) + 1;
-      
+
       // Count by user
       stats.byUser[session.userId] = (stats.byUser[session.userId] || 0) + 1;
-      
+
       // Count special states
       if (session.isAuthenticated) stats.authenticated++;
       if (session.isReady) stats.ready++;
@@ -336,14 +335,15 @@ export class SessionRepository {
   /**
    * Clean up stale sessions
    */
-  async cleanupStaleSessions(maxAge = 86400000) { // 24 hours
+  async cleanupStaleSessions(maxAge = 86_400_000) {
+    // 24 hours
     const now = Date.now();
     const sessions = await this.findAll();
     const cleaned = [];
 
     for (const session of sessions) {
       const sessionAge = now - new Date(session.updatedAt || session.createdAt).getTime();
-      
+
       if (sessionAge > maxAge && session.status !== 'ready') {
         await this.delete(session.sessionId);
         cleaned.push(session.sessionId);

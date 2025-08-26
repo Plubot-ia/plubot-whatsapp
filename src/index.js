@@ -3,19 +3,23 @@ import express from 'express';
 import helmet from 'helmet';
 import { Server } from 'socket.io';
 
+import redis from './config/redis.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import {
+  sessionRateLimiter,
+  messageRateLimiter,
+  qrRateLimiter,
+} from './middleware/UserRateLimiter.js';
 import flowRoutes from './routes/flow.js';
-import sessionsRouter from './routes/sessions.js';
-import sessionStatusRoutes from './routes/sessions-status.js';
-import qrRouter from './routes/qr.js';
-import messagesRouter from './routes/messages.js';
 import healthRouter from './routes/health.js';
+import messagesRouter from './routes/messages.js';
 import metricsRouter from './routes/metrics.js';
-import { sessionRateLimiter, messageRateLimiter, qrRateLimiter } from './middleware/UserRateLimiter.js';
+import qrRouter from './routes/qr.js';
+import sessionStatusRoutes from './routes/sessions-status.js';
+import sessionsRouter from './routes/sessions.js';
+import metricsService from './services/MetricsService.js';
 import whatsappManager from './services/WhatsAppManager.js';
 import logger from './utils/logger.js';
-import metricsService from './services/MetricsService.js';
-import redis from './config/redis.js';
 
 const app = express();
 let io = null;
@@ -37,10 +41,10 @@ app.use(metricsService.apiMetricsMiddleware());
 
 app.use(
   cors({
-    origin: function(origin, callback) {
+    origin: function (origin, callback) {
       // Permitir requests sin origin (ej. Postman, curl)
       if (!origin) return callback(null, true);
-      
+
       // Lista de orígenes permitidos
       const allowedOrigins = [
         'http://localhost:3000',
@@ -51,9 +55,9 @@ app.use(
         'http://127.0.0.1:3001',
         'http://127.0.0.1:5173',
         'http://127.0.0.1:5174',
-        'null' // Para archivos locales
+        'null', // Para archivos locales
       ];
-      
+
       // Verificar si el origin está en la lista o es 'null' (archivos locales)
       if (allowedOrigins.includes(origin) || origin === 'null' || origin === 'file://') {
         callback(null, true);
@@ -74,17 +78,19 @@ app.use(express.urlencoded({ extended: true }));
 console.log('Sessions router:', sessionsRouter);
 console.log('Sessions router stack:', sessionsRouter.stack);
 app.use('/api/sessions', sessionsRouter);
-app.use('/api/qr', 
-  qrRateLimiter.middleware({ 
-    getUserId: (req) => req.params?.userId || req.ip 
+app.use(
+  '/api/qr',
+  qrRateLimiter.middleware({
+    getUserId: (req) => req.params?.userId || req.ip,
   }),
-  qrRouter
+  qrRouter,
 );
-app.use('/api/messages', 
-  messageRateLimiter.middleware({ 
-    getUserId: (req) => req.body?.userId || req.ip 
+app.use(
+  '/api/messages',
+  messageRateLimiter.middleware({
+    getUserId: (req) => req.body?.userId || req.ip,
   }),
-  messagesRouter
+  messagesRouter,
 );
 app.use('/api/sessions-status', sessionStatusRoutes);
 app.use('/api/flow', flowRoutes);
@@ -120,9 +126,9 @@ app.get('/api/metrics/legacy', async (req, res) => {
     rateLimits: {
       sessions: sessionRateLimiter.getGlobalStats(),
       messages: messageRateLimiter.getGlobalStats(),
-      qr: qrRateLimiter.getGlobalStats()
+      qr: qrRateLimiter.getGlobalStats(),
     },
-    handlers: whatsappManager.enhancedHandlers?.getAllMetrics()
+    handlers: whatsappManager.enhancedHandlers?.getAllMetrics(),
   };
   res.json(metrics);
 });
@@ -138,7 +144,6 @@ app.use((req, res, next) => {
   req.io = io;
   next();
 });
-
 
 // Error handling
 app.use(errorHandler);
@@ -168,9 +173,8 @@ const server = app.listen(PORT, () => {
     logger.info(`Client connected: ${socket.id}`);
 
     // Join room for QR updates
-    socket.on('subscribe-qr', ({ userId, plubotId }) => {
-    });
-    
+    socket.on('subscribe-qr', ({ userId, plubotId }) => {});
+
     socket.on('disconnect', () => {
       logger.info('Socket disconnected:', socket.id);
     });

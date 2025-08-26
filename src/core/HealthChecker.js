@@ -1,7 +1,9 @@
-import { EventEmitter } from 'events';
-import os from 'os';
-import Redis from 'ioredis';
+import { EventEmitter } from 'node:events';
+import os from 'node:os';
+
 import express from 'express';
+import Redis from 'ioredis';
+
 import logger from '../utils/logger.js';
 
 /**
@@ -12,24 +14,24 @@ export class HealthChecker {
   constructor(config = {}) {
     this.config = {
       timeout: config.timeout || 5000,
-      interval: config.interval || 30000,
+      interval: config.interval || 30_000,
       dependencies: config.dependencies || {},
       thresholds: {
         memory: config.thresholds?.memory || 0.85,
-        cpu: config.thresholds?.cpu || 0.90,
+        cpu: config.thresholds?.cpu || 0.9,
         responseTime: config.thresholds?.responseTime || 3000,
         errorRate: config.thresholds?.errorRate || 0.05,
       },
       ...config,
     };
-    
+
     this.checks = new Map();
     this.results = new Map();
     this.status = 'initializing';
-    
+
     this._registerDefaultChecks();
   }
-  
+
   /**
    * Register default health checks
    */
@@ -40,7 +42,7 @@ export class HealthChecker {
       const free = os.freemem();
       const used = total - free;
       const usage = used / total;
-      
+
       return {
         status: usage < this.config.thresholds.memory ? 'healthy' : 'unhealthy',
         details: {
@@ -51,13 +53,13 @@ export class HealthChecker {
         },
       };
     });
-    
+
     this.registerCheck('system:cpu', async () => {
       const cpus = os.cpus();
       const loads = os.loadavg();
       const cpuCount = cpus.length;
       const load1 = loads[0] / cpuCount;
-      
+
       return {
         status: load1 < this.config.thresholds.cpu ? 'healthy' : 'unhealthy',
         details: {
@@ -67,12 +69,12 @@ export class HealthChecker {
         },
       };
     });
-    
+
     this.registerCheck('process:memory', async () => {
       const usage = process.memoryUsage();
       const maxHeap = 512 * 1024 * 1024; // 512MB default
       const heapUsage = usage.heapUsed / maxHeap;
-      
+
       return {
         status: heapUsage < this.config.thresholds.memory ? 'healthy' : 'unhealthy',
         details: {
@@ -84,10 +86,10 @@ export class HealthChecker {
         },
       };
     });
-    
+
     this.registerCheck('process:uptime', async () => {
       const uptime = process.uptime();
-      
+
       return {
         status: 'healthy',
         details: {
@@ -96,7 +98,7 @@ export class HealthChecker {
         },
       };
     });
-    
+
     // Redis check
     if (this.config.dependencies.redis) {
       this.registerCheck('dependency:redis', async () => {
@@ -105,12 +107,12 @@ export class HealthChecker {
           const start = Date.now();
           await redis.ping();
           const latency = Date.now() - start;
-          
+
           const info = await redis.info('server');
-          const version = info.match(/redis_version:([^\r\n]+)/)?.[1];
-          
+          const version = info.match(/redis_version:([^\n\r]+)/)?.[1];
+
           await redis.quit();
-          
+
           return {
             status: latency < 100 ? 'healthy' : 'degraded',
             details: {
@@ -130,21 +132,21 @@ export class HealthChecker {
         }
       });
     }
-    
+
     // WhatsApp sessions check
     this.registerCheck('whatsapp:sessions', async () => {
       try {
-        const sessionPool = this.config.dependencies.sessionPool;
+        const { sessionPool } = this.config.dependencies;
         if (!sessionPool) {
           return {
             status: 'unknown',
             details: { message: 'Session pool not configured' },
           };
         }
-        
+
         const metrics = sessionPool.getMetrics();
         const utilizationThreshold = 0.8;
-        
+
         return {
           status: metrics.poolUtilization < utilizationThreshold * 100 ? 'healthy' : 'degraded',
           details: {
@@ -162,22 +164,21 @@ export class HealthChecker {
         };
       }
     });
-    
+
     // Message queue check
     this.registerCheck('queue:health', async () => {
       try {
-        const messageQueue = this.config.dependencies.messageQueue;
+        const { messageQueue } = this.config.dependencies;
         if (!messageQueue) {
           return {
             status: 'unknown',
             details: { message: 'Message queue not configured' },
           };
         }
-        
+
         const stats = await messageQueue.getQueueStats();
-        const totalFailed = Object.values(stats.queues)
-          .reduce((sum, q) => sum + q.failed, 0);
-        
+        const totalFailed = Object.values(stats.queues).reduce((sum, q) => sum + q.failed, 0);
+
         return {
           status: totalFailed < 100 ? 'healthy' : 'degraded',
           details: {
@@ -193,46 +194,46 @@ export class HealthChecker {
       }
     });
   }
-  
+
   /**
    * Register a health check
    */
-  registerCheck(name, checkFn, options = {}) {
+  registerCheck(name, checkFunction, options = {}) {
     this.checks.set(name, {
-      fn: checkFn,
+      fn: checkFunction,
       timeout: options.timeout || this.config.timeout,
       critical: options.critical || false,
     });
-    
+
     logger.debug(`Health check registered: ${name}`);
   }
-  
+
   /**
    * Run a single health check
    */
   async _checkRedis() {
     const start = Date.now();
     const redis = this.config.dependencies?.redis;
-    
+
     if (!redis) {
       return this._formatCheck('dependency:redis', 'healthy', Date.now() - start, {
         message: 'Redis not configured',
       });
     }
-    
+
     try {
       const client = new Redis(redis);
-      
+
       // Run check with timeout
       const result = await Promise.race([
         client.ping(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Check timeout')), this.config.timeout)
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Check timeout')), this.config.timeout),
         ),
       ]);
-      
+
       const latency = Date.now() - start;
-      
+
       return {
         status: latency < 100 ? 'healthy' : 'degraded',
         details: {
@@ -240,7 +241,6 @@ export class HealthChecker {
           connected: true,
         },
       };
-      
     } catch (error) {
       return {
         status: 'unhealthy',
@@ -251,10 +251,10 @@ export class HealthChecker {
       };
     }
   }
-  
+
   async runCheck(name) {
     const check = this.checks.get(name);
-    
+
     if (!check) {
       return {
         name,
@@ -262,20 +262,20 @@ export class HealthChecker {
         message: 'Check not found',
       };
     }
-    
+
     try {
       const start = Date.now();
-      
+
       // Run check with timeout
       const result = await Promise.race([
         check.fn(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Check timeout')), check.timeout)
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Check timeout')), check.timeout),
         ),
       ]);
-      
+
       const duration = Date.now() - start;
-      
+
       return {
         name,
         status: result.status,
@@ -283,10 +283,9 @@ export class HealthChecker {
         details: result.details,
         timestamp: new Date().toISOString(),
       };
-      
     } catch (error) {
       logger.error(`Health check ${name} failed:`, error);
-      
+
       return {
         name,
         status: 'unhealthy',
@@ -295,70 +294,70 @@ export class HealthChecker {
       };
     }
   }
-  
+
   /**
    * Run all health checks
    */
   async runAllChecks() {
     const results = {};
     const promises = [];
-    
+
     for (const [name] of this.checks) {
       promises.push(
-        this.runCheck(name).then(result => {
+        this.runCheck(name).then((result) => {
           results[name] = result;
-        })
+        }),
       );
     }
-    
+
     await Promise.all(promises);
-    
+
     // Store results
     for (const [name, result] of Object.entries(results)) {
       this.results.set(name, result);
     }
-    
+
     // Calculate overall status
     this.status = this._calculateOverallStatus(results);
-    
+
     return {
       status: this.status,
       timestamp: new Date().toISOString(),
       checks: results,
     };
   }
-  
+
   /**
    * Calculate overall health status
    */
   _calculateOverallStatus(results) {
-    const statuses = Object.values(results).map(r => r.status);
-    
+    const statuses = new Set(Object.values(results).map((r) => r.status));
+
     // If any critical check is unhealthy, overall is unhealthy
-    const criticalChecks = Array.from(this.checks.entries())
+    const criticalChecks = [...this.checks.entries()]
       .filter(([, check]) => check.critical)
       .map(([name]) => name);
-    
+
     for (const name of criticalChecks) {
       if (results[name]?.status === 'unhealthy') {
         return 'unhealthy';
       }
     }
-    
+
     // Check for any unhealthy status
-    if (statuses.includes('unhealthy')) {
+    if (statuses.has('unhealthy')) {
       return 'degraded';
     }
-    
+
     // Check for degraded status
-    if (statuses.includes('degraded')) {
+    if (statuses.has('degraded')) {
       return 'degraded';
     }
-    
+
     // All checks passed
     return 'healthy';
   }
-  
+
   /**
    * Get liveness status (is service alive?)
    */
@@ -370,7 +369,7 @@ export class HealthChecker {
       pid: process.pid,
     };
   }
-  
+
   /**
    * Get readiness status (is service ready to accept traffic?)
    */
@@ -378,17 +377,17 @@ export class HealthChecker {
     // Check critical dependencies
     const criticalChecks = ['dependency:redis', 'whatsapp:sessions'];
     const results = {};
-    
+
     for (const check of criticalChecks) {
       if (this.checks.has(check)) {
         results[check] = await this.runCheck(check);
       }
     }
-    
-    const ready = Object.values(results).every(r => 
-      r.status === 'healthy' || r.status === 'degraded'
+
+    const ready = Object.values(results).every(
+      (r) => r.status === 'healthy' || r.status === 'degraded',
     );
-    
+
     return {
       ready,
       status: ready ? 'ready' : 'not_ready',
@@ -396,7 +395,7 @@ export class HealthChecker {
       checks: results,
     };
   }
-  
+
   /**
    * Start periodic health checks
    */
@@ -404,21 +403,20 @@ export class HealthChecker {
     this.monitoringInterval = setInterval(async () => {
       try {
         await this.runAllChecks();
-        
+
         if (this.status === 'unhealthy') {
           logger.error('Service health check failed - status: unhealthy');
         } else if (this.status === 'degraded') {
           logger.warn('Service health check warning - status: degraded');
         }
-        
       } catch (error) {
         logger.error('Health check monitoring error:', error);
       }
     }, this.config.interval);
-    
+
     logger.info(`Health monitoring started (interval: ${this.config.interval}ms)`);
   }
-  
+
   /**
    * Stop monitoring
    */
@@ -429,38 +427,38 @@ export class HealthChecker {
       logger.info('Health monitoring stopped');
     }
   }
-  
+
   /**
    * Format uptime
    */
   _formatUptime(seconds) {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
+    const days = Math.floor(seconds / 86_400);
+    const hours = Math.floor((seconds % 86_400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    
+
     const parts = [];
     if (days > 0) parts.push(`${days}d`);
     if (hours > 0) parts.push(`${hours}h`);
     if (minutes > 0) parts.push(`${minutes}m`);
     parts.push(`${secs}s`);
-    
+
     return parts.join(' ');
   }
-  
+
   /**
    * Express middleware for health endpoints
    */
   routes() {
     const router = express.Router();
-    
+
     // Main health check endpoint
     router.get('/health', async (req, res) => {
       try {
         const result = await this.runAllChecks();
-        const statusCode = result.status === 'healthy' ? 200 : 
-                          result.status === 'degraded' ? 200 : 503;
-        
+        const statusCode =
+          result.status === 'healthy' ? 200 : result.status === 'degraded' ? 200 : 503;
+
         res.status(statusCode).json(result);
       } catch (error) {
         res.status(503).json({
@@ -469,31 +467,31 @@ export class HealthChecker {
         });
       }
     });
-    
+
     // Liveness probe (for Kubernetes)
     router.get('/health/live', async (req, res) => {
       const result = await this.getLiveness();
       res.json(result);
     });
-    
+
     // Readiness probe (for Kubernetes)
     router.get('/health/ready', async (req, res) => {
       const result = await this.getReadiness();
       res.status(result.ready ? 200 : 503).json(result);
     });
-    
+
     // Individual check endpoint
     router.get('/health/check/:name', async (req, res) => {
       const result = await this.runCheck(req.params.name);
-      const statusCode = result.status === 'healthy' ? 200 : 
-                        result.status === 'degraded' ? 200 : 503;
-      
+      const statusCode =
+        result.status === 'healthy' ? 200 : result.status === 'degraded' ? 200 : 503;
+
       res.status(statusCode).json(result);
     });
-    
+
     return router;
   }
-  
+
   /**
    * Shutdown health checker
    */

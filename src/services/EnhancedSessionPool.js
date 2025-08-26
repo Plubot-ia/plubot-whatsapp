@@ -1,5 +1,5 @@
-import logger from '../utils/logger.js';
 import { circuitBreakerManager } from '../patterns/CircuitBreaker.js';
+import logger from '../utils/logger.js';
 
 /**
  * Enhanced Session Pool for managing multiple WhatsApp sessions
@@ -14,7 +14,7 @@ class EnhancedSessionPool {
     this.sessionMetrics = new Map();
     this.circuitBreaker = circuitBreakerManager.getBreaker('SessionPool', {
       failureThreshold: 10,
-      resetTimeout: 30000
+      resetTimeout: 30_000
     });
   }
 
@@ -32,7 +32,7 @@ class EnhancedSessionPool {
    */
   async acquireSession(userId, plubotId) {
     const sessionId = `${userId}-${plubotId}`;
-    
+
     return this.circuitBreaker.execute(async () => {
       // Check if session already exists
       if (this.globalSessions.has(sessionId)) {
@@ -100,19 +100,21 @@ class EnhancedSessionPool {
           lastActive: this.lastActive,
           messagesProcessed: this.messagesProcessed,
           errors: this.errors,
-          uptime: this.uptime
+          uptime: this.uptime,
         };
-      }
+      },
     };
-    
+
     const userPool = this.getOrCreateUserPool(userId);
     userPool.set(plubotId, session);
     this.globalSessions.set(sessionId, session);
-    
-    logger.info(`🏊 Session ${sessionId} added to pool (User: ${userId}, Total: ${this.globalSessions.size})`);
-    
+
+    logger.info(
+      `🏊 Session ${sessionId} added to pool (User: ${userId}, Total: ${this.globalSessions.size})`
+    );
+
     this.updateMetrics(sessionId, 'created');
-    
+
     return session;
   }
 
@@ -170,7 +172,7 @@ class EnhancedSessionPool {
     // Remove from global pool
     this.globalSessions.delete(sessionId);
     this.sessionMetrics.delete(sessionId);
-    
+
     logger.info(`✅ Session ${sessionId} removed from pool`);
   }
 
@@ -185,7 +187,7 @@ class EnhancedSessionPool {
       sessionsByStatus: {},
       averageUptime: 0,
       totalMessagesProcessed: 0,
-      circuitBreakerStatus: this.circuitBreaker.getStatus()
+      circuitBreakerStatus: this.circuitBreaker.getStatus(),
     };
 
     // Calculate per-user stats
@@ -197,10 +199,10 @@ class EnhancedSessionPool {
     let totalUptime = 0;
     for (const session of this.globalSessions.values()) {
       stats.sessionsByStatus[session.status] = (stats.sessionsByStatus[session.status] || 0) + 1;
-      
+
       const uptime = Date.now() - session.createdAt;
       totalUptime += uptime;
-      
+
       if (session.metrics) {
         stats.totalMessagesProcessed += session.metrics.messagesProcessed || 0;
       }
@@ -220,14 +222,14 @@ class EnhancedSessionPool {
     if (!this.sessionMetrics.has(sessionId)) {
       this.sessionMetrics.set(sessionId, {
         actions: [],
-        created: Date.now()
+        created: Date.now(),
       });
     }
 
     const metrics = this.sessionMetrics.get(sessionId);
     metrics.actions.push({
       action,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Keep only last 100 actions
@@ -243,7 +245,7 @@ class EnhancedSessionPool {
     setInterval(() => {
       const stats = this.getStatistics();
       logger.info('📊 Session Pool Statistics:', stats);
-    }, 60000); // Every minute
+    }, 60_000); // Every minute
   }
 
   /**
@@ -254,7 +256,7 @@ class EnhancedSessionPool {
       try {
         // Clean up inactive sessions
         const now = Date.now();
-        const inactiveThreshold = 3600000; // 1 hour
+        const inactiveThreshold = 3_600_000; // 1 hour
 
         for (const [sessionId, session] of this.globalSessions) {
           if (now - session.lastActive > inactiveThreshold && session.status !== 'ready') {
@@ -270,7 +272,7 @@ class EnhancedSessionPool {
       } catch (error) {
         logger.error('Error in session pool health check:', error);
       }
-    }, 300000); // Every 5 minutes
+    }, 300_000); // Every 5 minutes
   }
 
   /**
@@ -279,11 +281,11 @@ class EnhancedSessionPool {
   getHealthStatus() {
     const stats = this.getStatistics();
     const capacity = (this.globalSessions.size / this.globalMaxSessions) * 100;
-    
+
     return {
       healthy: capacity < 80 && this.circuitBreaker.isHealthy(),
       capacity: `${capacity.toFixed(1)}%`,
-      stats
+      stats,
     };
   }
 
@@ -292,11 +294,11 @@ class EnhancedSessionPool {
    */
   async drain() {
     logger.info('🚿 Draining session pool...');
-    
+
     for (const sessionId of this.globalSessions.keys()) {
       await this.removeSession(sessionId);
     }
-    
+
     this.pools.clear();
     this.sessionMetrics.clear();
     logger.info('✅ Session pool drained');

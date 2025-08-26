@@ -3,55 +3,57 @@
  * Production-ready WhatsApp session management with improved reliability
  */
 
-import EventEmitter from 'events';
+import EventEmitter from 'node:events';
+
+import redisClient from '../config/redis.js';
+import { SessionDTO, SessionCreateResponseDTO, SessionListResponseDTO } from '../dto/SessionDTO.js';
+import { circuitBreakerManager } from '../patterns/CircuitBreaker.js';
+import { SessionRepository } from '../repositories/SessionRepository.js';
 import logger from '../utils/logger.js';
-import WhatsAppSessionManager from './WhatsAppSessionManager.js';
-import SessionPersistenceService from './SessionPersistenceService.js';
+
 import AutoReconnectService from './AutoReconnectService.js';
 import enhancedSessionPool from './EnhancedSessionPool.js';
-import { circuitBreakerManager } from '../patterns/CircuitBreaker.js';
 import { EnhancedWhatsAppHandlers } from './EnhancedWhatsAppHandlers.js';
 import HealthCheckService from './HealthCheckService.js';
-import { SessionRepository } from '../repositories/SessionRepository.js';
-import { SessionDTO, SessionCreateResponseDTO, SessionListResponseDTO } from '../dto/SessionDTO.js';
-import redisClient from '../config/redis.js';
+import SessionPersistenceService from './SessionPersistenceService.js';
+import WhatsAppSessionManager from './WhatsAppSessionManager.js';
 
 class WhatsAppManagerV2 extends EventEmitter {
   constructor() {
     super();
-    
+
     // Redis client
     this.redis = redisClient;
-    
+
     // Client references (never exposed to API)
     this.clients = new Map();
-    
+
     // Core services
     this.sessionManager = new WhatsAppSessionManager(this);
     this.persistenceService = new SessionPersistenceService();
     this.reconnectService = null;
     this.sessionPool = enhancedSessionPool;
     this.healthCheckService = new HealthCheckService(this);
-    
+
     // Repository for clean data access
     this.repository = new SessionRepository(redisClient, this.sessionManager);
-    
+
     // Circuit breaker for resilience
     this.circuitBreaker = circuitBreakerManager.getBreaker('WhatsAppManager', {
       failureThreshold: 5,
-      resetTimeout: 60000,
-      monitoringPeriod: 10000
+      resetTimeout: 60_000,
+      monitoringPeriod: 10_000,
     });
-    
+
     // Metrics
     this.metrics = {
       sessionsCreated: 0,
       sessionsFailed: 0,
       messagesProcessed: 0,
       qrGenerated: 0,
-      reconnections: 0
+      reconnections: 0,
     };
-    
+
     this.initialized = false;
   }
 
@@ -66,23 +68,22 @@ class WhatsAppManagerV2 extends EventEmitter {
 
     try {
       logger.info('🚀 Initializing WhatsApp Manager V2...');
-      
+
       // Setup auto-reconnection
       this.reconnectService = new AutoReconnectService(this);
       // this.reconnectService.startMonitoring();
-      
+
       // Setup health monitoring
       // this.healthCheckService.startMonitoring();
-      
+
       // Restore sessions from persistence
       // await this.restoreSessions();
-      
+
       // Setup periodic cleanup
       this.setupPeriodicCleanup();
-      
+
       this.initialized = true;
       logger.info('✅ WhatsApp Manager V2 initialized successfully');
-      
     } catch (error) {
       logger.error('Failed to initialize WhatsApp Manager:', error);
       throw error;
@@ -97,49 +98,50 @@ class WhatsAppManagerV2 extends EventEmitter {
     // Validate required parameters
     if (!userId || userId === 'undefined' || !plubotId || plubotId === 'undefined') {
       logger.error(`Invalid session parameters: userId=${userId}, plubotId=${plubotId}`);
-      return SessionCreateResponseDTO.failure('userId and plubotId are required and cannot be undefined');
+      return SessionCreateResponseDTO.failure(
+        'userId and plubotId are required and cannot be undefined',
+      );
     }
-    
+
     const sessionId = `${userId}-${plubotId}`;
-    
+
     // Check if session already exists
     const existing = await this.getSession(sessionId);
     if (existing && existing.status !== 'error') {
       logger.info(`Session ${sessionId} already exists`);
       return SessionCreateResponseDTO.success(existing);
     }
-    
+
     return this.circuitBreaker.execute(async () => {
       try {
         logger.info(`Creating session ${sessionId}...`);
-        
+
         // Use repository to create session (handles all complexity)
         const sessionDTO = await this.repository.create(userId, plubotId);
-        
+
         // Get the actual session from session manager (for internal use only)
         const session = this.sessionManager.clients.get(sessionId);
         if (session && session.client) {
           this.clients.set(sessionId, session.client);
-          
+
           // Setup event handlers
           await this.setupSessionHandlers(sessionId, session.client);
         }
-        
+
         // Update metrics
         this.metrics.sessionsCreated++;
-        
+
         // Emit event
         this.emit('session:created', sessionDTO);
-        
+
         logger.info(`✅ Session ${sessionId} created successfully`);
-        
+
         // Return clean DTO response
         return SessionCreateResponseDTO.success(sessionDTO);
-        
       } catch (error) {
         logger.error(`Failed to create session ${sessionId}:`, error);
         this.metrics.sessionsFailed++;
-        
+
         // Return clean error response
         return SessionCreateResponseDTO.failure(error.message);
       }
@@ -153,20 +155,19 @@ class WhatsAppManagerV2 extends EventEmitter {
   async getSession(sessionId) {
     try {
       const session = await this.repository.findById(sessionId);
-      
+
       if (!session) {
         return null;
       }
-      
+
       // Enrich with real-time status if client exists
       const client = this.clients.get(sessionId);
       if (client) {
         session.connectionState = client.info?.wid ? 'connected' : 'disconnected';
         session.isReady = client.info?.pushname ? true : false;
       }
-      
+
       return session;
-      
     } catch (error) {
       logger.error(`Failed to get session ${sessionId}:`, error);
       return null;
@@ -180,7 +181,7 @@ class WhatsAppManagerV2 extends EventEmitter {
   async getAllSessions(filter = {}) {
     try {
       const sessions = await this.repository.findAll(filter);
-      
+
       // Enrich with real-time status
       for (const session of sessions) {
         const client = this.clients.get(session.sessionId);
@@ -189,9 +190,8 @@ class WhatsAppManagerV2 extends EventEmitter {
           session.isReady = client.info?.pushname ? true : false;
         }
       }
-      
+
       return new SessionListResponseDTO(sessions);
-      
     } catch (error) {
       logger.error('Failed to get all sessions:', error);
       return new SessionListResponseDTO([]);
@@ -205,22 +205,21 @@ class WhatsAppManagerV2 extends EventEmitter {
     try {
       // Generate QR data URL
       const qrDataUrl = await this.generateQRDataUrl(qr);
-      
+
       // Update in repository
       const updated = await this.repository.updateQR(sessionId, qr, qrDataUrl);
-      
+
       // Update metrics
       this.metrics.qrGenerated++;
-      
+
       // Emit event for WebSocket
       this.emit('qr:updated', {
         sessionId,
         qr,
-        qrDataUrl
+        qrDataUrl,
       });
-      
+
       return updated;
-      
     } catch (error) {
       logger.error(`Failed to update QR for session ${sessionId}:`, error);
       throw error;
@@ -233,20 +232,19 @@ class WhatsAppManagerV2 extends EventEmitter {
   async destroySession(sessionId) {
     try {
       logger.info(`Destroying session ${sessionId}...`);
-      
+
       // Remove from repository
       await this.repository.delete(sessionId);
-      
+
       // Remove client reference
       this.clients.delete(sessionId);
-      
+
       // Emit event
       this.emit('session:destroyed', { sessionId });
-      
+
       logger.info(`✅ Session ${sessionId} destroyed successfully`);
-      
+
       return { success: true, sessionId };
-      
     } catch (error) {
       logger.error(`Failed to destroy session ${sessionId}:`, error);
       return { success: false, error: error.message };
@@ -258,22 +256,21 @@ class WhatsAppManagerV2 extends EventEmitter {
    */
   async sendMessage(sessionId, to, message, options = {}) {
     const client = this.clients.get(sessionId);
-    
+
     if (!client) {
       throw new Error(`Session ${sessionId} not found or not ready`);
     }
-    
+
     try {
       const result = await client.sendMessage(to, message, options);
-      
+
       // Update metrics
       this.metrics.messagesProcessed++;
       await this.repository.updateMetrics(sessionId, {
-        messagesSent: (await this.repository.findById(sessionId))?.messagesSent + 1 || 1
+        messagesSent: (await this.repository.findById(sessionId))?.messagesSent + 1 || 1,
       });
-      
+
       return result;
-      
     } catch (error) {
       logger.error(`Failed to send message for session ${sessionId}:`, error);
       throw error;
@@ -285,65 +282,65 @@ class WhatsAppManagerV2 extends EventEmitter {
    */
   async setupSessionHandlers(sessionId, client) {
     const handlers = new EnhancedWhatsAppHandlers(this);
-    
+
     // QR Code
     client.on('qr', async (qr) => {
       await this.updateSessionQR(sessionId, qr);
     });
-    
+
     // Ready
     client.on('ready', async () => {
       await this.repository.update(sessionId, {
         status: 'ready',
         isReady: true,
         isAuthenticated: true,
-        connectionState: 'connected'
+        connectionState: 'connected',
       });
-      
+
       this.emit('session:ready', { sessionId });
     });
-    
+
     // Authenticated
     client.on('authenticated', async () => {
       await this.repository.update(sessionId, {
         status: 'authenticated',
-        isAuthenticated: true
+        isAuthenticated: true,
       });
-      
+
       this.emit('session:authenticated', { sessionId });
     });
-    
+
     // Disconnected
     client.on('disconnected', async (reason) => {
       await this.repository.update(sessionId, {
         status: 'disconnected',
         connectionState: 'disconnected',
-        error: reason
+        error: reason,
       });
-      
+
       this.emit('session:disconnected', { sessionId, reason });
     });
-    
+
     // Message
     client.on('message', async (message) => {
       await this.repository.updateMetrics(sessionId, {
         messagesReceived: (await this.repository.findById(sessionId))?.messagesReceived + 1 || 1,
-        lastActivity: new Date().toISOString()
+        lastActivity: new Date().toISOString(),
       });
-      
+
       this.emit('message:received', { sessionId, message });
     });
-    
+
     // Error
     client.on('error', async (error) => {
       logger.error(`Session ${sessionId} error:`, error);
-      
+
       await this.repository.update(sessionId, {
         status: 'error',
         error: error.message,
-        lastError: error.message
+        lastError: error.message,
       });
-      
+
       this.emit('session:error', { sessionId, error: error.message });
     });
   }
@@ -359,8 +356,8 @@ class WhatsAppManagerV2 extends EventEmitter {
         margin: 2,
         color: {
           dark: '#000000',
-          light: '#FFFFFF'
-        }
+          light: '#FFFFFF',
+        },
       });
     } catch (error) {
       logger.error('Failed to generate QR data URL:', error);
@@ -374,25 +371,24 @@ class WhatsAppManagerV2 extends EventEmitter {
   async restoreSessions() {
     try {
       const sessions = await this.repository.findByStatus('ready');
-      
+
       for (const session of sessions) {
         try {
           // Recreate client
           const client = await this.sessionManager.restoreSession(session.sessionId);
-          
+
           if (client) {
             this.clients.set(session.sessionId, client);
             await this.setupSessionHandlers(session.sessionId, client);
-            
+
             logger.info(`✅ Restored session ${session.sessionId}`);
           }
         } catch (error) {
           logger.error(`Failed to restore session ${session.sessionId}:`, error);
         }
       }
-      
+
       logger.info(`Restored ${sessions.length} sessions`);
-      
     } catch (error) {
       logger.error('Failed to restore sessions:', error);
     }
@@ -412,7 +408,7 @@ class WhatsAppManagerV2 extends EventEmitter {
       } catch (error) {
         logger.error('Failed to clean up stale sessions:', error);
       }
-    }, 3600000); // 1 hour
+    }, 3_600_000); // 1 hour
   }
 
   /**
@@ -421,11 +417,11 @@ class WhatsAppManagerV2 extends EventEmitter {
   async getSessionState(sessionId) {
     try {
       const session = await this.getSession(sessionId);
-      
+
       if (!session) {
         return { status: 'not_found' };
       }
-      
+
       return {
         status: session.status || 'initializing',
         phoneNumber: session.phoneNumber || null,
@@ -433,7 +429,7 @@ class WhatsAppManagerV2 extends EventEmitter {
         createdAt: session.createdAt,
         isReady: session.isReady || false,
         isAuthenticated: session.isAuthenticated || false,
-        pushname: session.pushname || null
+        pushname: session.pushname || null,
       };
     } catch (error) {
       logger.error(`Error getting session state for ${sessionId}:`, error);
@@ -453,7 +449,7 @@ class WhatsAppManagerV2 extends EventEmitter {
    */
   async getHealthStatus() {
     const stats = await this.repository.getStatistics();
-    
+
     return {
       healthy: stats.ready > 0,
       sessions: stats,
@@ -461,8 +457,8 @@ class WhatsAppManagerV2 extends EventEmitter {
       circuitBreaker: {
         state: this.circuitBreaker.state,
         failures: this.circuitBreaker.failures,
-        successes: this.circuitBreaker.successes
-      }
+        successes: this.circuitBreaker.successes,
+      },
     };
   }
 
@@ -471,24 +467,23 @@ class WhatsAppManagerV2 extends EventEmitter {
    */
   async shutdown() {
     logger.info('Shutting down WhatsApp Manager...');
-    
+
     try {
       // Stop services
       if (this.reconnectService) {
         this.reconnectService.stopMonitoring();
       }
-      
+
       if (this.healthCheckService) {
         this.healthCheckService.stopMonitoring();
       }
-      
+
       // Destroy all sessions
       for (const sessionId of this.clients.keys()) {
         await this.destroySession(sessionId);
       }
-      
+
       logger.info('✅ WhatsApp Manager shut down successfully');
-      
     } catch (error) {
       logger.error('Error during shutdown:', error);
     }

@@ -5,6 +5,7 @@
 
 import { Router } from 'express';
 import { register } from 'prom-client';
+
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -22,7 +23,7 @@ router.get('/', async (req, res) => {
     logger.error('Error generating metrics:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to generate metrics'
+      error: 'Failed to generate metrics',
     });
   }
 });

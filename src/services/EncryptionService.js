@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 
 class EncryptionService {
   constructor() {
@@ -8,7 +8,7 @@ class EncryptionService {
     this.ivLength = 16; // 128 bits
     this.tagLength = 16; // 128 bits
     this.saltLength = 64; // 512 bits
-    
+
     // Load or generate master key
     this.masterKey = this.loadOrGenerateMasterKey();
   }
@@ -24,7 +24,7 @@ class EncryptionService {
       }
       return key;
     }
-    
+
     // Generate new key if not provided
     const newKey = crypto.randomBytes(this.keyLength);
     console.warn('⚠️  Generated new encryption key. Set ENCRYPTION_MASTER_KEY env variable:');
@@ -35,7 +35,7 @@ class EncryptionService {
   /**
    * Derive a key from master key using PBKDF2
    */
-  deriveKey(salt, iterations = 100000) {
+  deriveKey(salt, iterations = 100_000) {
     return crypto.pbkdf2Sync(this.masterKey, salt, iterations, this.keyLength, 'sha256');
   }
 
@@ -46,34 +46,26 @@ class EncryptionService {
     try {
       // Convert data to string if object
       const plaintext = typeof data === 'object' ? JSON.stringify(data) : String(data);
-      
+
       // Generate random salt and IV
       const salt = crypto.randomBytes(this.saltLength);
       const iv = crypto.randomBytes(this.ivLength);
-      
+
       // Derive key from master key
       const key = this.deriveKey(salt);
-      
+
       // Create cipher
       const cipher = crypto.createCipheriv(this.algorithm, key, iv);
-      
+
       // Encrypt data
-      const encrypted = Buffer.concat([
-        cipher.update(plaintext, 'utf8'),
-        cipher.final()
-      ]);
-      
+      const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+
       // Get auth tag
       const authTag = cipher.getAuthTag();
-      
+
       // Combine salt, iv, authTag, and encrypted data
-      const combined = Buffer.concat([
-        salt,
-        iv,
-        authTag,
-        encrypted
-      ]);
-      
+      const combined = Buffer.concat([salt, iv, authTag, encrypted]);
+
       // Return base64 encoded
       return combined.toString('base64');
     } catch (error) {
@@ -89,29 +81,26 @@ class EncryptionService {
     try {
       // Decode from base64
       const combined = Buffer.from(encryptedData, 'base64');
-      
+
       // Extract components
       const salt = combined.slice(0, this.saltLength);
       const iv = combined.slice(this.saltLength, this.saltLength + this.ivLength);
       const authTag = combined.slice(
         this.saltLength + this.ivLength,
-        this.saltLength + this.ivLength + this.tagLength
+        this.saltLength + this.ivLength + this.tagLength,
       );
       const encrypted = combined.slice(this.saltLength + this.ivLength + this.tagLength);
-      
+
       // Derive key from master key
       const key = this.deriveKey(salt);
-      
+
       // Create decipher
       const decipher = crypto.createDecipheriv(this.algorithm, key, iv);
       decipher.setAuthTag(authTag);
-      
+
       // Decrypt data
-      const decrypted = Buffer.concat([
-        decipher.update(encrypted),
-        decipher.final()
-      ]);
-      
+      const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+
       // Try to parse as JSON, otherwise return as string
       const plaintext = decrypted.toString('utf8');
       try {
@@ -133,9 +122,9 @@ class EncryptionService {
     const dataToEncrypt = {
       ...sessionData,
       client: undefined, // Don't encrypt the WhatsApp client object
-      encryptedAt: new Date().toISOString()
+      encryptedAt: new Date().toISOString(),
     };
-    
+
     return this.encrypt(dataToEncrypt);
   }
 
@@ -146,7 +135,7 @@ class EncryptionService {
     const decrypted = this.decrypt(encryptedData);
     return {
       ...decrypted,
-      decryptedAt: new Date().toISOString()
+      decryptedAt: new Date().toISOString(),
     };
   }
 
@@ -182,7 +171,7 @@ class EncryptionService {
     const expectedSignature = this.generateHMAC(data, key);
     return crypto.timingSafeEqual(
       Buffer.from(signature, 'hex'),
-      Buffer.from(expectedSignature, 'hex')
+      Buffer.from(expectedSignature, 'hex'),
     );
   }
 
@@ -208,7 +197,7 @@ class EncryptionService {
       tagLength: this.tagLength * 8,
       saltLength: this.saltLength * 8,
       keyDerivation: 'PBKDF2-SHA256',
-      iterations: 100000
+      iterations: 100_000,
     };
   }
 }
