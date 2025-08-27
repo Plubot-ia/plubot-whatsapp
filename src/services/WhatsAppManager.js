@@ -124,8 +124,15 @@ class WhatsAppManagerV2 extends EventEmitter {
         if (session && session.client) {
           this.clients.set(sessionId, session.client);
 
-          // Setup event handlers
+          // Setup event handlers - IMPORTANT: These are in addition to the handlers
+          // already set up in WhatsAppSessionManager before client.initialize()
+          // These handlers are for WhatsAppManager-specific events
           await this.setupSessionHandlers(sessionId, session.client);
+          
+          logger.info(`📋 Event handlers configured for session ${sessionId}`);
+          logger.info(`📋 Client event names: ${session.client.eventNames()}`);
+        } else {
+          logger.warn(`⚠️ No client found for session ${sessionId} after creation`);
         }
 
         // Update metrics
@@ -282,36 +289,53 @@ class WhatsAppManagerV2 extends EventEmitter {
    */
   async setupSessionHandlers(sessionId, client) {
     const handlers = new EnhancedWhatsAppHandlers(this);
+    logger.info(`🔧 Setting up event handlers for session ${sessionId}`);
 
     // QR Code
     client.on('qr', async (qr) => {
+      logger.info(`📱 QR event received for session ${sessionId}, QR length: ${qr?.length}`);
       await this.updateSessionQR(sessionId, qr);
     });
 
     // Ready
     client.on('ready', async () => {
-      await this.repository.update(sessionId, {
-        status: 'ready',
-        isReady: true,
-        isAuthenticated: true,
-        connectionState: 'connected',
-      });
+      logger.info(`✅ READY event received for session ${sessionId}`);
+      try {
+        await this.repository.update(sessionId, {
+          status: 'ready',
+          isReady: true,
+          isAuthenticated: true,
+          connectionState: 'connected',
+        });
+        logger.info(`✅ Session ${sessionId} updated to READY status`);
 
-      this.emit('session:ready', { sessionId });
+        this.emit('session:ready', { sessionId });
+        logger.info(`📤 Emitted session:ready event for ${sessionId}`);
+      } catch (error) {
+        logger.error(`❌ Error updating session ${sessionId} to ready:`, error);
+      }
     });
 
     // Authenticated
     client.on('authenticated', async () => {
-      await this.repository.update(sessionId, {
-        status: 'authenticated',
-        isAuthenticated: true,
-      });
+      logger.info(`🔐 AUTHENTICATED event received for session ${sessionId}`);
+      try {
+        await this.repository.update(sessionId, {
+          status: 'authenticated',
+          isAuthenticated: true,
+        });
+        logger.info(`🔐 Session ${sessionId} updated to AUTHENTICATED status`);
 
-      this.emit('session:authenticated', { sessionId });
+        this.emit('session:authenticated', { sessionId });
+        logger.info(`📤 Emitted session:authenticated event for ${sessionId}`);
+      } catch (error) {
+        logger.error(`❌ Error updating session ${sessionId} to authenticated:`, error);
+      }
     });
 
     // Disconnected
     client.on('disconnected', async (reason) => {
+      logger.info(`🔌 DISCONNECTED event received for session ${sessionId}, reason: ${reason}`);
       await this.repository.update(sessionId, {
         status: 'disconnected',
         connectionState: 'disconnected',
@@ -333,7 +357,7 @@ class WhatsAppManagerV2 extends EventEmitter {
 
     // Error
     client.on('error', async (error) => {
-      logger.error(`Session ${sessionId} error:`, error);
+      logger.error(`❌ ERROR event for session ${sessionId}:`, error);
 
       await this.repository.update(sessionId, {
         status: 'error',
@@ -343,6 +367,10 @@ class WhatsAppManagerV2 extends EventEmitter {
 
       this.emit('session:error', { sessionId, error: error.message });
     });
+
+    // Log all registered event listeners
+    const eventNames = client.eventNames();
+    logger.info(`📋 Registered events for session ${sessionId}:`, eventNames);
   }
 
   /**

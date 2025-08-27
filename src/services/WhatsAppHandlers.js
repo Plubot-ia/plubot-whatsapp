@@ -88,8 +88,11 @@ async function storeQRAndEmit(context) {
 }
 
 const setupAuthHandlers = (client, sessionId, session, manager) => {
+  logger.info(`🔧 Setting up auth handlers for session ${sessionId}`);
+  
   client.on('authenticated', () => {
     logger.info(`🔐 Session ${sessionId} authenticated!`);
+    logger.info(`🔐 AUTHENTICATED EVENT FIRED for ${sessionId}`);
 
     // Update session status
     const updatedSession = { ...session, status: 'authenticated', isAuthenticated: true };
@@ -123,6 +126,7 @@ const setupAuthHandlers = (client, sessionId, session, manager) => {
   });
 
   client.on('auth_failure', (message) => {
+    logger.error(`❌ AUTH_FAILURE EVENT for session ${sessionId}:`, message);
     logger.error(`Authentication failed for session ${sessionId}:`, message);
     // eslint-disable-next-line no-param-reassign
     session.status = 'auth_failed';
@@ -168,8 +172,11 @@ const setupAuthHandlers = (client, sessionId, session, manager) => {
  * @param {Object} manager - WhatsApp manager instance
  */
 const setupReadyHandler = (client, sessionId, session, manager) => {
+  logger.info(`🔧 Setting up ready handler for session ${sessionId}`);
+  
   client.on('ready', () => {
-    logger.info(`WhatsApp client ready for session ${sessionId}`);
+    logger.info(`✅ READY EVENT FIRED for session ${sessionId}`);
+    logger.info(`✅ Session ${sessionId} is ready!`);
 
     // Update session status
     const { info } = client;
@@ -316,16 +323,22 @@ const setupConnectionHandlers = (client, sessionId, session, manager) => {
  * @param {Object} client - WhatsApp client instance
  * @param {string} sessionId - Session identifier
  * @param {Object} session - Session object
- * @param {Object} redis - Redis client instance
  * @param {Object} manager - WhatsApp manager instance
  */
 const setupHandlers = (client, sessionId, session, manager) => {
+  logger.info(`📋 Setting up ALL handlers for session ${sessionId}`);
+  
   setupQRHandler(client, sessionId, session, manager);
   setupAuthHandlers(client, sessionId, session, manager);
   setupReadyHandler(client, sessionId, session, manager);
-  setupMessageHandlers(client, sessionId);
-  setupLoadingScreenHandler(client, sessionId);
-  setupConnectionHandlers(client, sessionId, session, manager);
+  setupDisconnectHandler(client, sessionId, session, manager);
+  setupMessageHandler(client, sessionId, session, manager);
+  setupErrorHandler(client, sessionId, session, manager);
+  setupRejectedCallHandler(client, sessionId, session, manager);
+  
+  // Log all registered event listeners
+  const events = client.eventNames();
+  logger.info(`📋 Registered events for ${sessionId}: ${events.join(', ')}`);
 };
 
 export {
