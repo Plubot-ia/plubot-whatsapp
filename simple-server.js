@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
+import { Client, LocalAuth } from 'whatsapp-web.js';
+import QRCode from 'qrcode';
 
 // Load environment variables
 dotenv.config();
@@ -32,8 +34,171 @@ app.use(express.urlencoded({ extended: true }));
 // Store sessions in memory
 const sessions = new Map();
 const qrCodes = new Map();
+const clients = new Map();
 
 // Routes
+app.post('/api/sessions/create', async (req, res) => {
+  try {
+    const { userId, plubotId } = req.body;
+    const sessionId = `${userId}-${plubotId}`;
+    
+    console.log(`Creating WhatsApp session: ${sessionId}`);
+    
+    // Check if session already exists
+    if (clients.has(sessionId)) {
+      const existingSession = sessions.get(sessionId);
+      if (existingSession && existingSession.qr) {
+        return res.json({
+          success: true,
+          sessionId,
+          status: existingSession.status,
+          qr: existingSession.qr,
+          qrDataUrl: existingSession.qrDataUrl
+        });
+      }
+    }
+    
+    // Create new WhatsApp client
+    const client = new Client({
+      authStrategy: new LocalAuth({
+        clientId: sessionId,
+        dataPath: './sessions'
+      }),
+      puppeteer: {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu'
+        ]
+      }
+    });
+    
+    // Initialize session data
+    const sessionData = {
+      status: 'initializing',
+      qr: null,
+      qrDataUrl: null,
+      phoneNumber: null
+    };
+    
+    sessions.set(sessionId, sessionData);
+    clients.set(sessionId, client);
+    
+    // Setup event handlers
+    client.on('qr', async (qr) => {
+      console.log(`QR received for session: ${sessionId}`);
+      const qrDataUrl = await QRCode.toDataURL(qr);
+      
+      sessionData.qr = qr;
+      sessionData.qrDataUrl = qrDataUrl;
+      sessionData.status = 'waiting_qr';
+      
+      // Emit to WebSocket
+      io.emit(`qr-update-${sessionId}`, {
+        qr,
+        qrDataUrl,
+        status: 'waiting_qr'
+      });
+    });
+    
+    client.on('authenticated', () => {
+      console.log(`Session authenticated: ${sessionId}`);
+      sessionData.status = 'authenticated';
+      sessionData.qr = null;
+      sessionData.qrDataUrl = null;
+      
+      io.emit(`session-authenticated-${sessionId}`, {
+        status: 'authenticated'
+      });
+    });
+    
+    client.on('ready', () => {
+      console.log(`Session ready: ${sessionId}`);
+      sessionData.status = 'ready';
+      sessionData.phoneNumber = client.info?.wid?.user || 'Connected';
+      
+      io.emit(`session-ready-${sessionId}`, {
+        status: 'ready',
+        phoneNumber: sessionData.phoneNumber
+      });
+    });
+    
+    client.on('disconnected', (reason) => {
+      console.log(`Session disconnected: ${sessionId}, reason: ${reason}`);
+      sessionData.status = 'disconnected';
+      
+      io.emit(`session-disconnected-${sessionId}`, {
+        status: 'disconnected',
+        reason
+      });
+    });
+    
+    // Initialize client
+    await client.initialize();
+    
+    // Wait for QR to be generated
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    res.json({
+      success: true,
+      sessionId,
+      status: sessionData.status,
+      qr: sessionData.qr,
+      qrDataUrl: sessionData.qrDataUrl
+    });
+    
+  } catch (error) {
+    console.error('Error creating session:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/sessions/qr', async (req, res) => {
+  const { sessionId, qr } = req.body;
+  console.log(`QR received for session: ${sessionId}`);
+  qrCodes.set(sessionId, qr);
+  
+  // Also store with userId-plubotId format
+  const parts = sessionId.split('-');
+  if (parts.length >= 2) {
+    const userId = parts[0];
+    const plubotId = parts.slice(1).join('');
+    const altKey = `${userId}-${plubotId}`;
+    qrCodes.set(altKey, qr);
+  }
+  
+  io.to(sessionId).emit('qr-update', { sessionId, qr });
+  res.json({ success: true });
+});
+
+app.post('/api/sessions/authenticated', async (req, res) => {
+  const { sessionId } = req.body;
+  console.log(`✅ Session authenticated: ${sessionId}`);
+  if (sessions.has(sessionId)) {
+    sessions.get(sessionId).status = 'authenticated';
+  }
+  io.to(sessionId).emit('session-authenticated', { sessionId });
+  res.json({ success: true });
+});
+
+app.post('/api/sessions/ready', async (req, res) => {
+  const { sessionId } = req.body;
+  console.log(`✨ Session ready: ${sessionId}`);
+  if (sessions.has(sessionId)) {
+    sessions.get(sessionId).status = 'ready';
+  }
+  io.to(sessionId).emit('session-ready', { sessionId });
+  res.json({ success: true });
+});
+
 app.post('/api/sessions/create', async (req, res) => {
   const { userId, plubotId } = req.body;
   const sessionId = `${userId}-${plubotId}`;
@@ -79,20 +244,29 @@ app.get('/api/sessions/:sessionId/status', (req, res) => {
   });
 });
 
-app.get('/api/qr/:userId/:plubotId', (req, res) => {
+app.get('/api/qr/:userId/:plubotId', async (req, res) => {
   const { userId, plubotId } = req.params;
   const sessionId = `${userId}-${plubotId}`;
+  
+  console.log(`Getting QR for session: ${sessionId}`);
+  
   const qr = qrCodes.get(sessionId);
   
-  if (!qr) {
-    return res.status(404).json({ success: false, error: 'QR not found' });
+  if (qr) {
+    res.json({
+      success: true,
+      qr: qr,
+      qrDataUrl: qr,
+      status: sessions.get(sessionId)?.status || 'waiting_qr'
+    });
+  } else {
+    // Return empty if no QR yet
+    res.json({
+      success: false,
+      error: 'No QR available yet',
+      status: 'initializing'
+    });
   }
-  
-  res.json({
-    success: true,
-    qr,
-    status: 'waiting_qr'
-  });
 });
 
 app.post('/api/sessions/refresh-qr', (req, res) => {
@@ -161,18 +335,19 @@ app.get('/health/ready', (req, res) => {
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
-
-  socket.on('subscribe', (data) => {
-    const { sessionId } = data;
-    if (sessionId) {
-      socket.join(sessionId);
-      console.log(`Client ${socket.id} subscribed to session ${sessionId}`);
-      
-      // Send current QR if exists
-      const qr = qrCodes.get(sessionId);
-      if (qr) {
-        socket.emit('qr', { qr });
+  console.log('Client connected:', socket.id);
+  
+  socket.on('join-room', (sessionId) => {
+    socket.join(sessionId);
+    console.log(`Socket ${socket.id} joined room ${sessionId}`);
+    
+    // Send current status if session exists
+    if (sessions.has(sessionId)) {
+      const session = sessions.get(sessionId);
+      if (session.status === 'authenticated') {
+        socket.emit('session-authenticated', { sessionId });
+      } else if (session.status === 'ready') {
+        socket.emit('session-ready', { sessionId });
       }
     }
   });

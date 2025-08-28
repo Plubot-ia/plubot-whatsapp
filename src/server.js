@@ -16,6 +16,7 @@ import { MessageQueueSystem } from './core/MessageQueue.js';
 import { SessionReconnector } from './core/SessionReconnector.js';
 import { MetricsCollector } from './core/MetricsCollector.js';
 import { HealthChecker } from './core/HealthChecker.js';
+import { QueueManager } from './core/QueueManager.js';
 
 // Middleware
 import { UserRateLimiter, sessionRateLimiter, messageRateLimiter, qrRateLimiter } from './middleware/UserRateLimiter.js';
@@ -57,6 +58,7 @@ class EnterpriseWhatsAppServer {
     this.circuitBreakerFactory = null;
     this.rateLimiter = null;
     this.whatsappManager = null;
+    this.queueManager = null;
   }
 
   /**
@@ -180,6 +182,18 @@ class EnterpriseWhatsAppServer {
     // Rate Limiter
     this.rateLimiter = new TieredRateLimiter();
 
+    // Queue Manager for demo session management
+    this.queueManager = new QueueManager({
+      maxConcurrentSessions: parseInt(process.env.MAX_QR_SESSIONS || '20'),
+      sessionTimeout: parseInt(process.env.SESSION_TIMEOUT || '1800000'), // 30 minutes
+      redis: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: process.env.REDIS_PORT || 6379,
+        password: process.env.REDIS_PASSWORD,
+      },
+    });
+    await this.queueManager.initialize();
+
     // WhatsApp Manager with enterprise features
     this.whatsappManager = new WhatsAppManager({
       sessionPool: this.sessionPool,
@@ -187,6 +201,7 @@ class EnterpriseWhatsAppServer {
       sessionReconnector: this.sessionReconnector,
       metricsCollector: this.metricsCollector,
       circuitBreakerFactory: this.circuitBreakerFactory,
+      queueManager: this.queueManager,
     });
 
     // Register message processors
@@ -464,6 +479,44 @@ class EnterpriseWhatsAppServer {
       }
     });
 
+    // Demo queue management endpoints
+    router.post('/queue/join', async (req, res) => {
+      try {
+        const { userId } = req.body;
+        if (!userId) {
+          return res.status(400).json({ error: 'User ID required' });
+        }
+
+        const result = await this.queueManager.joinQueue(userId);
+        res.json(result);
+      } catch (error) {
+        logger.error('Failed to join queue:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.get('/queue/status/:userId', async (req, res) => {
+      try {
+        const { userId } = req.params;
+        const status = await this.queueManager.getQueueStatus(userId);
+        res.json(status);
+      } catch (error) {
+        logger.error('Failed to get queue status:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/queue/leave/:userId', async (req, res) => {
+      try {
+        const { userId } = req.params;
+        await this.queueManager.leaveQueue(userId);
+        res.json({ success: true, message: 'Left queue successfully' });
+      } catch (error) {
+        logger.error('Failed to leave queue:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Circuit breaker status
     router.get('/circuit-breakers', async (req, res) => {
       try {
@@ -637,6 +690,7 @@ class EnterpriseWhatsAppServer {
           this.metricsCollector?.stopCollection(),
           this.rateLimiter?.shutdown(),
           this.circuitBreakerFactory?.shutdownAll(),
+          this.queueManager?.shutdown(),
         ]);
 
         logger.info('All components shut down successfully');

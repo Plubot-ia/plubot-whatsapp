@@ -70,6 +70,15 @@ services:
     ports:
       - "3001:3001"
       - "9091:9090"  # Metrics port
+    # Resource limits for demo service (max 20 concurrent sessions)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     environment:
       - NODE_ENV=production
       - PORT=3001
@@ -92,6 +101,11 @@ services:
       - SESSION_POOL_MAX_SIZE=100
       - SESSION_POOL_MIN_SIZE=10
       - SESSION_IDLE_TIMEOUT=300000
+      
+      # Queue Manager configuration (Demo limits)
+      - MAX_QR_SESSIONS=20
+      - SESSION_TIMEOUT=1800000
+      - QUEUE_CHECK_INTERVAL=5000
       
       # Rate limiting
       - RATE_LIMIT_WINDOW=60000

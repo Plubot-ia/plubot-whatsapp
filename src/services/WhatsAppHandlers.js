@@ -331,10 +331,10 @@ const setupHandlers = (client, sessionId, session, manager) => {
   setupQRHandler(client, sessionId, session, manager);
   setupAuthHandlers(client, sessionId, session, manager);
   setupReadyHandler(client, sessionId, session, manager);
-  setupDisconnectHandler(client, sessionId, session, manager);
-  setupMessageHandler(client, sessionId, session, manager);
-  setupErrorHandler(client, sessionId, session, manager);
-  setupRejectedCallHandler(client, sessionId, session, manager);
+  setupConnectionHandlers(client, sessionId, session, manager);
+  setupMessageHandlers(client, sessionId);
+  setupStateChangeHandler(client, sessionId, session);
+  setupLoadingScreenHandler(client, sessionId);
   
   // Log all registered event listeners
   const events = client.eventNames();

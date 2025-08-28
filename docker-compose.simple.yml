@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Redis for session storage
+  redis:
+    image: redis:7-alpine
+    container_name: plubot-redis-simple
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Simple WhatsApp Service
+  whatsapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    container_name: plubot-whatsapp-simple
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=info
+    volumes:
+      - ./sessions:/app/sessions
+      - ./logs:/app/logs
+      - ./.wwebjs_cache:/app/.wwebjs_cache
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+    driver: local

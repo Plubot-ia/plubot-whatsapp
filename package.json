@@ -3,7 +3,6 @@
   "version": "2.0.0",
   "description": "Enterprise WhatsApp microservice with clustering, queuing, and monitoring",
   "main": "src/server.js",
-  "type": "module",
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=9.0.0"
