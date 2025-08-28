@@ -18,7 +18,7 @@ const server = createServer(app);
 // Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:3000', 'http://localhost:5173'],
+    origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'],
     methods: ['GET', 'POST'],
     credentials: true
   }
@@ -78,17 +78,60 @@ app.post('/api/sessions/create', async (req, res) => {
     // Check queue position
     const position = await queueManager.joinQueue(userId, sessionId);
     
+    if (position === false) {
+      // Cannot join queue - return existing session or error
+      const existingSession = await whatsappService.getSessionStatus(sessionId);
+      if (existingSession && existingSession.status === 'ready') {
+        return res.json({
+          success: true,
+          sessionId,
+          status: 'ready',
+          message: 'Sesión ya activa'
+        });
+      }
+      
+      // Force cleanup and retry
+      await queueManager.removeFromQueue(userId);
+      await whatsappService.destroySession(sessionId);
+      
+      // Try again
+      const retryPosition = await queueManager.joinQueue(userId, sessionId);
+      if (retryPosition === false) {
+        return res.status(500).json({
+          success: false,
+          message: 'No puede unirse a la cola'
+        });
+      }
+    }
+    
     if (position === 1) {
       // Active immediately
-      const result = await whatsappService.createSession(sessionId, userId, plubotId);
-      res.json({
-        ...result,
-        queuePosition: 0,
-        status: 'active'
+      const result = await whatsappService.createSession(sessionId, { userId, plubotId });
+      
+      logger.info(`📊 Session creation result:`, {
+        success: result.success,
+        hasQR: !!result.qr,
+        hasQRDataUrl: !!result.qrDataUrl,
+        status: result.status,
+        qrLength: result.qr ? result.qr.length : 0
       });
+      
+      // Ensure proper response format
+      const response = {
+        success: result.success !== false,
+        sessionId,
+        qr: result.qr || result.qrDataUrl,
+        qrDataUrl: result.qrDataUrl || result.qr,
+        status: result.status || 'waiting_qr',
+        queuePosition: 0,
+        message: result.message || 'Sesión creada exitosamente'
+      };
+      
+      logger.info(`📤 Sending response with QR: ${!!response.qr}`);
+      return res.json(response);
     } else {
       // In queue
-      res.json({
+      return res.json({
         success: true,
         sessionId,
         queuePosition: position - 1,
@@ -101,7 +144,7 @@ app.post('/api/sessions/create', async (req, res) => {
     logger.error('Error creating session:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message || 'Error creating session'
     });
   }
 });
@@ -204,6 +247,12 @@ app.get('/api/queue/status', async (req, res) => {
 io.on('connection', (socket) => {
   logger.info(`🔌 Socket connected: ${socket.id}`);
 
+  // Handle both naming conventions for compatibility
+  socket.on('subscribe:session', (sessionId) => {
+    socket.join(`session-${sessionId}`);
+    logger.info(`Socket ${socket.id} subscribed to session-${sessionId}`);
+  });
+
   socket.on('join-session', (sessionId) => {
     socket.join(`session-${sessionId}`);
     logger.info(`Socket ${socket.id} joined room: session-${sessionId}`);
@@ -251,11 +300,11 @@ whatsappService.on('auth-failure', (data) => {
 });
 
 // Queue Manager event forwarding
-queueManager.on('session-activated', (data) => {
+queueManager.on('session-activated', async (data) => {
   logger.info(`🚀 Session activated for user ${data.userId}`);
   io.to(`session-${data.sessionId}`).emit('session-activated', data);
   // Create WhatsApp session when activated from queue
-  whatsappService.createSession(data.sessionId, data.userId, data.sessionId.split('-')[1]);
+  whatsappService.createSession(data.sessionId, { userId: data.userId, plubotId: data.sessionId.split('-')[1] });
 });
 
 queueManager.on('user-queued', (data) => {

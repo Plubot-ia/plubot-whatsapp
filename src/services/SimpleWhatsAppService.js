@@ -38,27 +38,60 @@ class SimpleWhatsAppService extends EventEmitter {
       // Check if session already exists
       if (this.sessions.has(sessionId)) {
         logger.info(`♻️ Session ${sessionId} already exists`);
-        const existingClient = this.sessions.get(sessionId);
-        const status = existingClient.status;
+        const existingSession = this.sessions.get(sessionId);
+        const status = existingSession.status;
         
-        // If session exists but QR expired, destroy and recreate
-        if (status === 'waiting_qr' && !this.qrCodes.has(sessionId)) {
+        // If session exists but QR expired or not ready, destroy and recreate
+        if ((status === 'waiting_qr' || status === 'initializing') && !this.qrCodes.has(sessionId)) {
           logger.info(`🔄 Recreating expired session: ${sessionId}`);
           await this.destroySession(sessionId);
-        } else {
+        } else if (this.qrCodes.has(sessionId)) {
+          // Return existing QR if available
+          const qrData = this.qrCodes.get(sessionId);
+          return { 
+            success: true,
+            sessionId,
+            status: 'waiting_qr',
+            qr: qrData.qr,
+            qrDataUrl: qrData.qrDataUrl
+          };
+        } else if (status === 'ready' || status === 'authenticated') {
+          // Session already connected
           return { 
             success: true,
             sessionId,
             status,
-            hasQR: this.qrCodes.has(sessionId)
+            message: 'Session already connected'
           };
+        } else {
+          // Destroy and recreate if in unknown state
+          logger.info(`🔄 Recreating session in unknown state: ${sessionId}`);
+          await this.destroySession(sessionId);
         }
       }
 
       logger.info(`🆕 Creating new session: ${sessionId}`);
       
-      // Set initial status
-      this.sessions.set(sessionId, { status: 'initializing' });
+      // Create a promise that will resolve when QR is generated
+      let qrResolve;
+      let qrResolved = false;
+      const qrPromise = new Promise((resolve) => {
+        qrResolve = (data) => {
+          if (!qrResolved) {
+            qrResolved = true;
+            resolve(data);
+          }
+        };
+      });
+      
+      // Set initial status with session data
+      const sessionData = { 
+        status: 'initializing',
+        userId: options.userId,
+        plubotId: options.plubotId,
+        createdAt: Date.now()
+      };
+      this.sessions.set(sessionId, sessionData);
       
       // Create WhatsApp client with optimized settings
       const client = new Client({
@@ -86,31 +119,70 @@ class SimpleWhatsAppService extends EventEmitter {
         restartOnAuthFail: true
       });
 
-      // Store session info
-      this.sessions.set(sessionId, client);
+      // Store client in session data (don't overwrite the whole object)
+      sessionData.client = client;
+      sessionData.qrResolve = qrResolve;
 
       // Setup event handlers BEFORE initialization
       this.setupEventHandlers(client, sessionId);
+      
+      // Add additional QR handler to resolve promise
+      client.on('qr', async (qr) => {
+        logger.info(`🔍 QR handler triggered for ${sessionId}, qrResolve exists: ${!!qrResolve}, resolved: ${qrResolved}`);
+        // Wait a bit for QR to be processed and stored
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (qrResolve && !qrResolved && this.qrCodes.has(sessionId)) {
+          logger.info(`✅ Resolving QR promise for ${sessionId}`);
+          qrResolve(this.qrCodes.get(sessionId));
+          sessionData.qrResolve = null;
+        } else if (qrResolved) {
+          logger.debug(`QR already resolved for ${sessionId}`);
+        } else {
+          logger.warn(`⚠️ Cannot resolve QR: qrResolve=${!!qrResolve}, hasQR=${this.qrCodes.has(sessionId)}`);
+        }
+      })
 
       // Initialize client (this will trigger QR event)
       logger.info(`🚀 Initializing WhatsApp client for ${sessionId}`);
       client.initialize().catch(error => {
         logger.error(`❌ Failed to initialize ${sessionId}:`, error);
-        this.sessions.get(sessionId).status = 'error';
+        sessionData.status = 'error';
+        if (qrResolve && !qrResolved) {
+          qrResolve(null);
+        }
       });
 
-      // Wait a bit for QR to be generated
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      logger.info(`✅ Session ${sessionId} initialization started`);
+      // Wait for QR to be actually generated (max 15 seconds)
+      logger.info(`⏳ Waiting for QR generation for ${sessionId}...`);
+      const qrData = await Promise.race([
+        qrPromise,
+        new Promise((resolve) => setTimeout(() => {
+          if (!qrResolved) {
+            logger.warn(`⏰ QR generation timeout for ${sessionId}`);
+            qrResolved = true;
+            resolve(null);
+          }
+        }, 15000))
+      ]);
       
-      const qrData = this.qrCodes.get(sessionId);
+      logger.info(`📊 QR wait result for ${sessionId}: ${qrData ? 'SUCCESS' : 'FAILED'}`);
+
+      if (!qrData) {
+        logger.warn(`⚠️ No QR generated for ${sessionId} within timeout`);
+        return {
+          success: false,
+          sessionId,
+          status: 'error',
+          message: 'QR code generation timeout'
+        };
+      }
+      
       return {
         success: true,
         sessionId,
         status: 'waiting_qr',
-        qr: qrData?.qr,
-        qrDataUrl: qrData?.dataUrl
+        qr: qrData.qr,
+        qrDataUrl: qrData.qrDataUrl
       };
 
     } catch (error) {
@@ -149,7 +221,7 @@ class SimpleWhatsAppService extends EventEmitter {
             dark: '#000000',
             light: '#FFFFFF'
           },
-          width: 300
+          width: 512
         };
         
         const qrDataUrl = await QRCode.toDataURL(qr, qrOptions);
@@ -195,10 +267,10 @@ class SimpleWhatsAppService extends EventEmitter {
       this.qrCodes.delete(sessionId);
       
       // Update session status
-      const session = this.sessions.get(sessionId);
-      if (session) {
-        session.status = 'authenticated';
-        session.authenticatedAt = Date.now();
+      const sessionData = this.sessions.get(sessionId);
+      if (sessionData) {
+        sessionData.status = 'authenticated';
+        sessionData.authenticatedAt = Date.now();
       }
       
       this.emit('session-authenticated', {
@@ -212,16 +284,16 @@ class SimpleWhatsAppService extends EventEmitter {
     client.on('ready', () => {
       logger.info(`✅ Session ${sessionId} is ready and connected`);
       
-      const session = this.sessions.get(sessionId);
-      if (session) {
-        session.status = 'ready';
-        session.readyAt = Date.now();
+      const sessionData = this.sessions.get(sessionId);
+      if (sessionData) {
+        sessionData.status = 'ready';
+        sessionData.readyAt = Date.now();
         
         // Get WhatsApp info if available
         const info = client.info;
         if (info) {
-          session.phoneNumber = info.wid?.user;
-          session.platform = info.platform;
+          sessionData.phoneNumber = info.wid?.user;
+          sessionData.platform = info.platform;
           logger.info(`📱 Connected: ${info.pushname} (${info.wid?.user})`);
         }
       }
@@ -239,9 +311,9 @@ class SimpleWhatsAppService extends EventEmitter {
       logger.warn(`🔌 Session ${sessionId} disconnected: ${reason}`);
       
       // Update session status
-      const session = this.sessions.get(sessionId);
-      if (session) {
-        session.status = 'disconnected';
+      const sessionData = this.sessions.get(sessionId);
+      if (sessionData) {
+        sessionData.status = 'disconnected';
       }
       
       this.emit('disconnected', { sessionId, reason, status: 'disconnected' });
@@ -287,8 +359,11 @@ class SimpleWhatsAppService extends EventEmitter {
    * Get existing session
    */
   async getSession(sessionId) {
-    const client = this.sessions.get(sessionId);
-    const status = client?.status;
+    const sessionData = this.sessions.get(sessionId);
+    if (!sessionData) return { client: null, status: null };
+    
+    const client = sessionData.client;
+    const status = sessionData.status;
     
     return { client, status };
   }
@@ -344,9 +419,9 @@ class SimpleWhatsAppService extends EventEmitter {
    * Get session status
    */
   async getSessionStatus(sessionId) {
-    const session = this.sessions.get(sessionId);
+    const sessionData = this.sessions.get(sessionId);
     
-    if (!session) {
+    if (!sessionData) {
       return {
         success: false,
         status: 'not_found',
@@ -359,13 +434,13 @@ class SimpleWhatsAppService extends EventEmitter {
     return {
       success: true,
       sessionId,
-      status: session.status || 'unknown',
+      status: sessionData.status || 'unknown',
       hasQR: !!qrData,
       info: {
-        authenticatedAt: session.authenticatedAt,
-        readyAt: session.readyAt,
-        phoneNumber: session.phoneNumber,
-        platform: session.platform
+        authenticatedAt: sessionData.authenticatedAt,
+        readyAt: sessionData.readyAt,
+        phoneNumber: sessionData.phoneNumber,
+        platform: sessionData.platform
       }
     };
   }
@@ -375,17 +450,22 @@ class SimpleWhatsAppService extends EventEmitter {
    */
   async sendMessage(sessionId, to, message) {
     try {
-      const session = this.sessions.get(sessionId);
+      const sessionData = this.sessions.get(sessionId);
       
-      if (!session || session.status !== 'ready') {
+      if (!sessionData || sessionData.status !== 'ready') {
         throw new Error('Session not ready');
+      }
+      
+      const client = sessionData.client;
+      if (!client) {
+        throw new Error('WhatsApp client not initialized');
       }
       
       // Format phone number
       const chatId = to.includes('@') ? to : `${to}@c.us`;
       
       // Send message
-      const result = await session.sendMessage(chatId, message);
+      const result = await client.sendMessage(chatId, message);
       
       logger.info(`📤 Message sent from ${sessionId} to ${to}`);
       
@@ -401,20 +481,47 @@ class SimpleWhatsAppService extends EventEmitter {
   }
 
   /**
+   * Destroy session completely
+   */
+  async destroySession(sessionId) {
+    try {
+      logger.info(`🗑️ Destroying session ${sessionId}`);
+      
+      const sessionData = this.sessions.get(sessionId);
+      if (sessionData && sessionData.client) {
+        try {
+          await sessionData.client.destroy();
+        } catch (error) {
+          logger.warn(`⚠️ Error destroying client for ${sessionId}:`, error.message);
+        }
+      }
+      
+      this.sessions.delete(sessionId);
+      this.qrCodes.delete(sessionId);
+      
+      return { success: true, message: 'Session destroyed' };
+    } catch (error) {
+      logger.error(`❌ Failed to destroy session ${sessionId}:`, error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
    * Disconnect session
    */
   async disconnectSession(sessionId) {
     try {
       logger.info(`🔌 Disconnecting session ${sessionId}`);
       
-      const session = this.sessions.get(sessionId);
+      const sessionData = this.sessions.get(sessionId);
+      const client = sessionData?.client;
       
-      if (session && session.destroy) {
+      if (client && client.destroy) {
         // Remove all listeners to prevent memory leaks
-        session.removeAllListeners();
+        client.removeAllListeners();
         
         // Destroy WhatsApp client
-        await session.destroy().catch(err => {
+        await client.destroy().catch(err => {
           logger.error(`Error destroying client ${sessionId}:`, err);
         });
       }
@@ -458,9 +565,10 @@ class SimpleWhatsAppService extends EventEmitter {
       if (qrData && qrData.retryCount < 3) {
         // Try to regenerate QR
         logger.info(`🔄 Attempting to regenerate QR for ${sessionId}`);
-        const session = this.sessions.get(sessionId);
-        if (session && session.initialize) {
-          session.initialize().catch(err => {
+        const sessionData = this.sessions.get(sessionId);
+        const client = sessionData?.client;
+        if (client && client.initialize) {
+          client.initialize().catch(err => {
             logger.error('Failed to reinitialize client:', err);
           });
         }
@@ -495,10 +603,11 @@ class SimpleWhatsAppService extends EventEmitter {
   async cleanup() {
     logger.info('🧹 Cleaning up all WhatsApp sessions...');
     
-    for (const [sessionId, session] of this.sessions) {
+    for (const [sessionId, sessionData] of this.sessions) {
       try {
-        if (session && session.destroy) {
-          await session.destroy();
+        const client = sessionData?.client;
+        if (client && client.destroy) {
+          await client.destroy();
         }
       } catch (error) {
         logger.error(`Error cleaning up session ${sessionId}:`, error);
@@ -524,12 +633,14 @@ class SimpleWhatsAppService extends EventEmitter {
   async getAllSessions() {
     const sessions = [];
     
-    for (const [sessionId, session] of this.sessions.entries()) {
+    for (const [sessionId, sessionData] of this.sessions.entries()) {
       const qrData = this.qrCodes.get(sessionId);
       sessions.push({
         id: sessionId,
-        status: qrData ? 'waiting_qr' : 'ready',
-        hasQR: this.qrCodes.has(sessionId)
+        status: sessionData.status || 'unknown',
+        hasQR: this.qrCodes.has(sessionId),
+        userId: sessionData.userId,
+        plubotId: sessionData.plubotId
       });
     }
     

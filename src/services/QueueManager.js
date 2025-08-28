@@ -81,8 +81,16 @@ class QueueManager extends EventEmitter {
   async canJoinQueue(userId) {
     // Verificar si ya tiene sesión activa
     if (this.activeSessions.has(userId)) {
-      logger.warn(`⚠️ Usuario ${userId} ya tiene sesión activa`);
-      return false;
+      logger.warn(`⚠️ Usuario ${userId} ya tiene sesión activa - limpiando`);
+      // Auto-cleanup stale session
+      await this.redis.del(`active:${userId}`);
+      this.activeSessions.delete(userId);
+      // Remove from queue if exists
+      this.waitingQueue = this.waitingQueue.filter(item => item.userId !== userId);
+      await this.redis.del('waiting_queue');
+      if (this.waitingQueue.length > 0) {
+        await this.redis.rpush('waiting_queue', ...this.waitingQueue.map(item => JSON.stringify(item)));
+      }
     }
     
     // Verificar si ya está en cola

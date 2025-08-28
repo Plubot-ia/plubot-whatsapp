@@ -160,21 +160,24 @@ router.post('/:sessionId/messages', validateRequest('sendMessage'), async (req, 
 
 /**
  * Refresh QR code for a session
- * POST /api/sessions/refresh-qr
+ * POST /api/sessions/:sessionId/refresh-qr
  */
-router.post('/refresh-qr', async (req, res) => {
-  const { userId, plubotId } = req.body;
+router.post('/:sessionId/refresh-qr', async (req, res) => {
+  const { sessionId } = req.params;
 
   try {
-    logger.info(`Refreshing QR for user: ${userId}, plubot: ${plubotId}`);
+    logger.info(`Refreshing QR for session: ${sessionId}`);
 
     // Destroy existing session
-    const sessionId = `${userId}-${plubotId}`;
     await whatsappManager.destroySession(sessionId);
 
     // Wait a moment for cleanup
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
+    // Extract userId and plubotId from sessionId
+    const [userId, ...plubotParts] = sessionId.split('-');
+    const plubotId = plubotParts.join('-');
+    
     // Create new session to generate fresh QR
     const response = await whatsappManager.createSession(userId, plubotId);
 
