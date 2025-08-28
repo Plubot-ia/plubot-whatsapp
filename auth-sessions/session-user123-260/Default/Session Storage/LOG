@@ -1,2 +1,3 @@
-2025/08/28-00:26:56.419 fb03 Creating DB /Users/fenix/Desktop/Plubot/plubot-whatsapp/auth-sessions/session-user123-260/Default/Session Storage since it was missing.
-2025/08/28-00:26:56.431 fb03 Reusing MANIFEST /Users/fenix/Desktop/Plubot/plubot-whatsapp/auth-sessions/session-user123-260/Default/Session Storage/MANIFEST-000001
+2025/08/28-00:36:02.471 f803 Reusing MANIFEST /Users/fenix/Desktop/Plubot/plubot-whatsapp/auth-sessions/session-user123-260/Default/Session Storage/MANIFEST-000001
+2025/08/28-00:36:02.471 f803 Recovering log #3
+2025/08/28-00:36:02.472 f803 Reusing old log /Users/fenix/Desktop/Plubot/plubot-whatsapp/auth-sessions/session-user123-260/Default/Session Storage/000003.log 
