@@ -7,7 +7,7 @@ export default {
   
   apiKey: {
     header: 'x-api-key',
-    secret: process.env.API_KEY || 'your-api-key-change-this'
+    secret: process.env.API_KEY || 'dev-api-key-2024-secure'
   },
   
   rateLimit: {

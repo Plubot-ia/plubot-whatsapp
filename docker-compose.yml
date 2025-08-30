@@ -4,7 +4,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
@@ -22,10 +22,10 @@ services:
       - NODE_ENV=production
       - LOG_LEVEL=debug
       - REDIS_URL=redis://redis:6379
-      - API_KEY=${API_KEY:-test-api-key-123}
+      - API_KEY=${API_KEY:-dev-api-key-2024-secure}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5174}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174}
-      - JWT_SECRET=${JWT_SECRET:-your-secret-key-here}
+      - JWT_SECRET=${JWT_SECRET:-065aa22d204f2bea2d48f580e42d2ff21587165615956f22c7413f291ad07b1c}
       - SENTRY_DSN=${SENTRY_DSN}
       - SENTRY_RELEASE=${SENTRY_RELEASE:-1.0.0}
       - CONNECTION_POOL_MAX_SIZE=100
