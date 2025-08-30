@@ -1,7 +1,7 @@
-const Joi = require('joi');
-const xss = require('xss');
-const logger = require('../../core/utils/logger');
-const schemas = require('./validation.schemas');
+import Joi from 'joi';
+import DOMPurify from 'isomorphic-dompurify';
+import logger from '../../core/utils/logger.js';
+import schemas from './validation.schemas.js';
 
 /**
  * Validation schemas for different endpoints
@@ -140,7 +140,7 @@ const sanitizeInput = (req, res, next) => {
   const sanitize = (obj) => {
     if (typeof obj === 'string') {
       // Remove potential script tags and dangerous characters
-      return xss(obj)
+      return DOMPurify.sanitize(obj)
         .replace(/javascript:/gi, '')
         .replace(/on\w+\s*=/gi, '')
         .trim();
@@ -205,11 +205,11 @@ const validateSessionOwnership = async (req, res, next) => {
   next();
 };
 
-module.exports = {
+export {
   validateBody,
   validateParams,
   validateQuery,
   sanitizeInput,
   validateSessionOwnership,
-  schemas: validationSchemas
+  schemas
 };

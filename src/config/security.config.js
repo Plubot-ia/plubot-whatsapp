@@ -31,11 +31,12 @@ export default {
   },
   
   cors: {
-    origin: (process.env.ALLOWED_ORIGINS || 'http://localhost:5173').split(','),
+    origin: (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:3000,http://localhost:8080').split(','),
     credentials: true,
     optionsSuccessStatus: 200,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-request-id']
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-request-id'],
+    allowFileProtocol: true // Custom flag for file:// protocol
   },
   
   helmet: {
@@ -43,9 +44,9 @@ export default {
       directives: {
         defaultSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.socket.io", "https://cdn.jsdelivr.net"],
         imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", "ws://localhost:*", "wss://localhost:*"],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         mediaSrc: ["'self'"],

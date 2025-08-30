@@ -1,6 +1,9 @@
-const rateLimit = require('express-rate-limit');
-const slowDown = require('express-slow-down');
-const { rateLimit: rateLimitConfig, slowDown: slowDownConfig } = require('../../config/security.config');
+import rateLimit from 'express-rate-limit';
+import slowDown from 'express-slow-down';
+import logger from '../../core/utils/logger.js';
+import securityConfig from '../../config/security.config.js';
+
+const { rateLimit: rateLimitConfig, slowDown: slowDownConfig } = securityConfig;
 
 /**
  * General Rate Limiter
@@ -18,18 +21,6 @@ const generalLimiter = rateLimit({
       retryAfter: req.rateLimit.resetTime
     });
   }
-});
-
-/**
- * Strict Rate Limiter for sensitive endpoints
- */
-const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // limit each IP to 5 requests per windowMs
-  message: 'Too many requests to this endpoint, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: false
 });
 
 /**
@@ -62,6 +53,17 @@ const qrCodeLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10, // limit each IP to 10 QR requests per minute
   message: 'Too many QR code requests, please wait.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+/**
+ * Auth Rate Limiter
+ */
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // limit each IP to 10 auth attempts per minute
+  message: 'Too many auth attempts, please try again later.',
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -132,12 +134,12 @@ const tieredRateLimiter = (req, res, next) => {
   limiter(req, res, next);
 };
 
-module.exports = {
+export {
   generalLimiter,
-  strictLimiter,
   sessionCreationLimiter,
   messageLimiter,
   qrCodeLimiter,
+  authLimiter,
   speedLimiter,
   createUserRateLimiter,
   tieredRateLimiter

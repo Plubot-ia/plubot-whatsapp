@@ -2,6 +2,7 @@ import { makeWASocket, DisconnectReason, useMultiFileAuthState, makeCacheableSig
 import { Boom } from '@hapi/boom';
 import logger from '../utils/logger.js';
 import crypto from 'crypto';
+import pino from 'pino';
 
 class SessionManager {
   constructor(redisClient, io) {
@@ -19,20 +20,15 @@ class SessionManager {
     try {
       logger.info('Creating WhatsApp session', { sessionId, forceNew });
 
-      // Check if session exists and force new if requested
+      // ALWAYS destroy existing session to avoid conflicts
       if (this.sessions.has(sessionId)) {
-        if (forceNew) {
-          await this.destroySession(sessionId);
-        } else {
-          const existingSession = this.sessions.get(sessionId);
-          if (existingSession.status === 'connected') {
-            return {
-              status: 'already_connected',
-              sessionId
-            };
-          }
-        }
+        logger.info(`Destroying existing session: ${sessionId}`);
+        await this.destroySession(sessionId);
       }
+      
+      // Clear Redis data
+      await this.redis.del(`qr:${sessionId}`);
+      await this.redis.del(`session:${sessionId}:status`);
 
       // Check pool size
       if (this.sessions.size >= this.maxSessions) {
@@ -44,7 +40,7 @@ class SessionManager {
       this.sessions.set(sessionId, session);
 
       // Store in Redis
-      await this.redis.setex(
+      await this.redis.setEx(
         `session:${sessionId}:status`,
         this.sessionTimeout / 1000,
         'initializing'
@@ -64,26 +60,51 @@ class SessionManager {
    * Initialize WhatsApp session
    */
   async initializeSession(sessionId) {
-    const { state, saveCreds } = await useMultiFileAuthState(`./auth-sessions/${sessionId}`);
+    // CRITICAL: Use completely fresh path to avoid ANY cache
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substring(7);
+    const authPath = `./auth-sessions/${sessionId}-${timestamp}-${randomId}`;
+    const fs = await import('fs/promises');
+    
+    // Clean ALL auth-sessions directories to ensure fresh start
+    try {
+      await fs.rm('./auth-sessions', { recursive: true, force: true });
+    } catch {}
+    await fs.mkdir('./auth-sessions', { recursive: true });
+    
+    // Create fresh directory
+    await fs.mkdir(authPath, { recursive: true });
+    logger.info(`Created fresh auth directory: ${authPath}`);
+    
+    // Create fresh auth state - NEVER reuse
+    const { state, saveCreds } = await useMultiFileAuthState(authPath);
+    
+    // Create a fresh logger instance for this session
+    const sessionLogger = pino({ 
+      level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+      transport: {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          ignore: 'pid,hostname',
+          translateTime: 'SYS:standard'
+        }
+      }
+    });
     
     const sock = makeWASocket({
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger),
-      },
-      printQRInTerminal: false,
-      logger,
-      browser: [
-        process.env.WHATSAPP_BROWSER_NAME || 'Chrome',
-        process.env.WHATSAPP_BROWSER_VERSION || '120.0.0.0',
-        'Desktop'
-      ],
+      auth: state,
+      printQRInTerminal: false, // Handle QR manually
+      logger: sessionLogger,
+      browser: ['WhatsApp Service', 'Chrome', '1.0.0'],
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 30000,
       retryRequestDelayMs: 2000,
-      maxRetries: parseInt(process.env.SESSION_MAX_RETRIES) || 5,
       connectTimeoutMs: 60000,
       qrTimeout: 60000,
+      generateHighQualityLinkPreview: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: false
     });
 
     // Setup event handlers
@@ -108,6 +129,13 @@ class SessionManager {
     // Connection update
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
+      
+      console.log('Connection update received:', {
+        sessionId,
+        connection,
+        hasQR: !!qr,
+        qrLength: qr ? qr.length : 0
+      });
 
       if (qr) {
         await this.handleQRCode(sessionId, qr);
@@ -160,14 +188,14 @@ class SessionManager {
       }
 
       // Store QR in Redis with TTL
-      await this.redis.setex(
+      await this.redis.setEx(
         `qr:${sessionId}`,
         60, // 60 seconds TTL
         qr
       );
 
       // Update session status
-      await this.redis.setex(
+      await this.redis.setEx(
         `session:${sessionId}:status`,
         this.sessionTimeout / 1000,
         'waiting_qr'
@@ -199,7 +227,7 @@ class SessionManager {
       }
 
       // Update Redis
-      await this.redis.setex(
+      await this.redis.setEx(
         `session:${sessionId}:status`,
         this.sessionTimeout / 1000,
         'connected'
@@ -208,7 +236,13 @@ class SessionManager {
       // Clear QR from Redis
       await this.redis.del(`qr:${sessionId}`);
 
-      // Emit to WebSocket
+      // Emit authentication event first
+      this.io.to(`session-${sessionId}`).emit('session-authenticated', {
+        sessionId,
+        status: 'authenticated'
+      });
+
+      // Then emit ready event
       this.io.to(`session-${sessionId}`).emit('session-ready', {
         sessionId,
         status: 'connected'
@@ -223,13 +257,28 @@ class SessionManager {
    */
   async handleDisconnection(sessionId, lastDisconnect) {
     try {
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      const errorCode = lastDisconnect?.error?.output?.statusCode;
+      const errorMessage = lastDisconnect?.error?.output?.payload?.error;
+      const shouldReconnect = errorCode !== DisconnectReason.loggedOut;
       
       logger.info('Session disconnected', { 
         sessionId, 
         shouldReconnect,
-        reason: lastDisconnect?.error?.output?.payload?.error 
+        errorCode,
+        reason: errorMessage 
       });
+
+      // Handle error 515 (Stream Errored - restart required after pairing)
+      if (errorCode === 515 || errorMessage?.includes('Stream Errored')) {
+        logger.info('Handling error 515 - Restarting connection after pairing', { sessionId });
+        
+        // Wait a bit for WhatsApp to process the pairing
+        setTimeout(async () => {
+          logger.info('Reconnecting after pairing...', { sessionId });
+          await this.createSession(sessionId, false);
+        }, 2000);
+        return;
+      }
 
       if (shouldReconnect) {
         // Check if manually disconnected
@@ -407,7 +456,7 @@ class SessionManager {
       }
 
       // Mark as manually disconnected
-      await this.redis.setex(
+      await this.redis.setEx(
         `session:${sessionId}:manual_disconnect`,
         300, // 5 minutes TTL
         'true'
@@ -435,8 +484,22 @@ class SessionManager {
       const session = this.sessions.get(sessionId);
       
       if (session && session.sock) {
-        session.sock.ev.removeAllListeners();
-        await session.sock.logout().catch(() => {});
+        // Remove listeners first
+        if (session.sock.ev) {
+          session.sock.ev.removeAllListeners();
+        }
+        // Try to logout, but catch any errors
+        try {
+          if (session.sock.logout && typeof session.sock.logout === 'function') {
+            await session.sock.logout();
+          }
+        } catch (logoutError) {
+          // Ignore logout errors - session might not be fully established
+          logger.debug('Logout error ignored during session destruction', { 
+            sessionId, 
+            error: logoutError.message 
+          });
+        }
       }
 
       // Remove from memory
@@ -446,6 +509,16 @@ class SessionManager {
       const keys = await this.redis.keys(`*${sessionId}*`);
       if (keys.length > 0) {
         await this.redis.del(...keys);
+      }
+      
+      // Clean auth folder
+      const authPath = `./auth-sessions/${sessionId}`;
+      const fs = await import('fs/promises');
+      try {
+        await fs.rm(authPath, { recursive: true, force: true });
+        logger.info(`Cleaned auth folder: ${authPath}`);
+      } catch (error) {
+        logger.warn(`Could not clean auth folder: ${error.message}`);
       }
 
       logger.info('Session destroyed', { sessionId });

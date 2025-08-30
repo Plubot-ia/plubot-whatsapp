@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test WhatsApp Frontend Flow</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #666;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+        .status.connecting { background: #fff3cd; color: #856404; }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.waiting { background: #d1ecf1; color: #0c5460; }
+        #qrcode {
+            text-align: center;
+            padding: 20px;
+            background: white;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #qrcode canvas {
+            max-width: 100%;
+        }
+        .logs {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 3px;
+        }
+        .log-entry.error { color: #dc3545; }
+        .log-entry.success { color: #28a745; }
+        .log-entry.info { color: #17a2b8; }
+        .log-entry.warning { color: #ffc107; }
+    </style>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+</head>
+<body>
+    <h1>🔧 Test WhatsApp Authentication Flow</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>Control Panel</h2>
+            <div class="controls">
+                <button id="createBtn">Crear Sesión</button>
+                <button id="refreshBtn" disabled>Actualizar QR</button>
+                <button id="disconnectBtn" disabled>Desconectar</button>
+            </div>
+            
+            <div id="status" class="status waiting">
+                Sistema iniciado. Esperando acciones...
+            </div>
+            
+            <h2>QR Code</h2>
+            <div id="qrcode">
+                <span style="color: #999;">QR aparecerá aquí</span>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Logs</h2>
+            <div id="logs" class="logs"></div>
+            
+            <h2>Session Info</h2>
+            <div id="sessionInfo" style="background: #f8f9fa; padding: 10px; border-radius: 4px;">
+                <strong>Session ID:</strong> <span id="sessionId">-</span><br>
+                <strong>Estado:</strong> <span id="sessionStatus">-</span><br>
+                <strong>WebSocket:</strong> <span id="wsStatus">Desconectado</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin + '/api';
+        const WS_URL = window.location.origin;
+        const API_KEY = 'dev-api-key-2024-secure';
+        
+        let socket = null;
+        let currentSessionId = null;
+        
+        // Logging
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = `[${time}] ${message}`;
+            
+            const logsContainer = document.getElementById('logs');
+            logsContainer.appendChild(logEntry);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+            
+            console.log(`[${type.toUpperCase()}]`, message);
+        }
+        
+        // Update status
+        function updateStatus(message, type = 'waiting') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+            log(message, type === 'error' ? 'error' : 'info');
+        }
+        
+        // Update session info
+        function updateSessionInfo(sessionId, status) {
+            document.getElementById('sessionId').textContent = sessionId || '-';
+            document.getElementById('sessionStatus').textContent = status || '-';
+        }
+        
+        // Display QR code
+        function displayQR(qr) {
+            const container = document.getElementById('qrcode');
+            container.innerHTML = '';
+            
+            if (qr) {
+                QRCode.toCanvas(qr, { width: 256 }, (err, canvas) => {
+                    if (err) {
+                        log('Error generando QR: ' + err.message, 'error');
+                        container.innerHTML = '<span style="color: red;">Error generando QR</span>';
+                    } else {
+                        container.appendChild(canvas);
+                        log('QR code actualizado', 'success');
+                    }
+                });
+            } else {
+                container.innerHTML = '<span style="color: #999;">Esperando QR...</span>';
+            }
+        }
+        
+        // Setup WebSocket
+        function setupWebSocket() {
+            if (socket && socket.connected) {
+                log('WebSocket ya conectado', 'warning');
+                return;
+            }
+            
+            log('Conectando WebSocket...', 'info');
+            socket = io(WS_URL, {
+                transports: ['websocket'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000
+            });
+            
+            socket.on('connect', () => {
+                log('WebSocket conectado', 'success');
+                document.getElementById('wsStatus').textContent = 'Conectado';
+                
+                if (currentSessionId) {
+                    socket.emit('join-room', currentSessionId);
+                    log(`Joined room: ${currentSessionId}`, 'info');
+                }
+            });
+            
+            socket.on('disconnect', () => {
+                log('WebSocket desconectado', 'warning');
+                document.getElementById('wsStatus').textContent = 'Desconectado';
+            });
+            
+            socket.on('qr-update', (data) => {
+                log('Evento: qr-update recibido', 'info');
+                if (data.qr) {
+                    displayQR(data.qr);
+                    updateStatus('QR generado. Escanea con WhatsApp', 'waiting');
+                }
+            });
+            
+            socket.on('session-authenticated', (data) => {
+                log('Evento: session-authenticated', 'success');
+                updateStatus('Sesión autenticada correctamente', 'connected');
+                updateSessionInfo(data.sessionId, 'authenticated');
+                displayQR(null);
+                document.getElementById('qrcode').innerHTML = '<span style="color: green;">✅ Autenticado</span>';
+            });
+            
+            socket.on('session-ready', (data) => {
+                log('Evento: session-ready', 'success');
+                updateStatus('WhatsApp listo y conectado', 'connected');
+                updateSessionInfo(data.sessionId, 'ready');
+            });
+            
+            socket.on('session-error', (data) => {
+                log(`Evento: session-error - ${data.error}`, 'error');
+                updateStatus(`Error: ${data.error}`, 'error');
+            });
+            
+            socket.on('session-disconnected', (data) => {
+                log('Evento: session-disconnected', 'warning');
+                updateStatus('Sesión desconectada', 'waiting');
+                updateSessionInfo(null, 'disconnected');
+                currentSessionId = null;
+                document.getElementById('refreshBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = true;
+            });
+        }
+        
+        // Create session
+        async function createSession() {
+            try {
+                updateStatus('Creando nueva sesión...', 'connecting');
+                
+                const sessionId = `test-${Date.now()}`;
+                const response = await fetch(`${API_URL}/sessions/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': API_KEY
+                    },
+                    body: JSON.stringify({ 
+                        sessionId,
+                        forceNew: true 
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${error}`);
+                }
+                
+                const data = await response.json();
+                log(`Sesión creada: ${data.sessionId}`, 'success');
+                
+                currentSessionId = data.sessionId;
+                updateSessionInfo(data.sessionId, data.status);
+                
+                // Join WebSocket room
+                if (socket && socket.connected) {
+                    socket.emit('join-room', currentSessionId);
+                }
+                
+                // Enable buttons
+                document.getElementById('refreshBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = false;
+                
+                updateStatus('Sesión creada. Esperando QR...', 'waiting');
+                
+            } catch (error) {
+                log(`Error creando sesión: ${error.message}`, 'error');
+                updateStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Refresh QR
+        async function refreshQR() {
+            if (!currentSessionId) {
+                log('No hay sesión activa para actualizar', 'warning');
+                return;
+            }
+            
+            try {
+                updateStatus('Actualizando QR...', 'connecting');
+                
+                const response = await fetch(`${API_URL}/sessions/${currentSessionId}/refresh-qr`, {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': API_KEY
+                    }
+                });
+                
+                if (!response.ok) {
+                    const error = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${error}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.qr) {
+                    displayQR(data.qr);
+                    updateStatus('QR actualizado', 'waiting');
+                } else {
+                    updateStatus('No se pudo obtener nuevo QR', 'warning');
+                }
+                
+            } catch (error) {
+                log(`Error actualizando QR: ${error.message}`, 'error');
+                updateStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Disconnect session
+        async function disconnectSession() {
+            if (!currentSessionId) {
+                log('No hay sesión activa para desconectar', 'warning');
+                return;
+            }
+            
+            try {
+                updateStatus('Desconectando sesión...', 'connecting');
+                
+                const response = await fetch(`${API_URL}/sessions/${currentSessionId}/disconnect`, {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': API_KEY
+                    }
+                });
+                
+                if (!response.ok) {
+                    const error = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${error}`);
+                }
+                
+                log('Sesión desconectada', 'success');
+                updateStatus('Sesión desconectada', 'waiting');
+                updateSessionInfo(null, 'disconnected');
+                
+                currentSessionId = null;
+                document.getElementById('refreshBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('qrcode').innerHTML = '<span style="color: #999;">Sesión terminada</span>';
+                
+            } catch (error) {
+                log(`Error desconectando: ${error.message}`, 'error');
+                updateStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Event listeners
+        document.getElementById('createBtn').addEventListener('click', createSession);
+        document.getElementById('refreshBtn').addEventListener('click', refreshQR);
+        document.getElementById('disconnectBtn').addEventListener('click', disconnectSession);
+        
+        // Initialize
+        setupWebSocket();
+        log('Sistema listo. Haz clic en "Crear Sesión" para comenzar.', 'info');
+    </script>
+</body>
+</html>

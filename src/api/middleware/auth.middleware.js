@@ -41,6 +41,12 @@ const authenticateJWT = (req, res, next) => {
 const authenticateAPIKey = (req, res, next) => {
   const apiKey = req.headers[apiKeyConfig.header];
   
+  logger.debug('API Key auth check', {
+    receivedKey: apiKey ? apiKey.substring(0, 10) + '...' : 'none',
+    expectedKey: apiKeyConfig.secret ? apiKeyConfig.secret.substring(0, 10) + '...' : 'none',
+    header: apiKeyConfig.header
+  });
+  
   if (!apiKey) {
     return res.status(401).json({ 
       success: false, 
@@ -65,9 +71,20 @@ const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const apiKey = req.headers[apiKeyConfig.header];
   
+  // Debug logging
+  console.log('Auth middleware check', {
+    path: req.path,
+    method: req.method,
+    headers: req.headers,
+    hasApiKey: !!apiKey,
+    apiKeyHeader: apiKeyConfig.header,
+    apiKeyValue: apiKey,
+    expectedKey: apiKeyConfig.secret
+  });
+  
   // If API key is provided, use API key authentication
   if (apiKey) {
-    return authenticateApiKey(req, res, next);
+    return authenticateAPIKey(req, res, next);
   }
   
   // Otherwise, use JWT authentication

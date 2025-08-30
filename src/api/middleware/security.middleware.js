@@ -1,14 +1,16 @@
-const helmet = require('helmet');
-const cors = require('cors');
-const { helmet: helmetConfig, cors: corsConfig } = require('../../config/security.config');
+import helmet from 'helmet';
+import cors from 'cors';
+import { v4 as uuidv4 } from 'uuid';
+import securityConfig from '../../config/security.config.js';
+import logger from '../../core/utils/logger.js';
 
 /**
  * Configure Helmet for security headers
  */
 const configureHelmet = () => {
   return helmet({
-    contentSecurityPolicy: helmetConfig.contentSecurityPolicy,
-    hsts: helmetConfig.hsts,
+    contentSecurityPolicy: securityConfig.helmet.contentSecurityPolicy,
+    hsts: securityConfig.helmet.hsts,
     noSniff: true,
     xssFilter: true,
     referrerPolicy: { policy: 'same-origin' },
@@ -23,24 +25,37 @@ const configureHelmet = () => {
 const configureCors = () => {
   return cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or Postman)
+      // Allow requests with no origin (like mobile apps or curl)
       if (!origin) return callback(null, true);
       
+      // Allow file:// protocol for local testing if configured
+      if (securityConfig.cors.allowFileProtocol && origin.startsWith('file://')) {
+        return callback(null, true);
+      }
+      
       // Check if origin is allowed
-      const allowedOrigins = Array.isArray(corsConfig.origin) 
-        ? corsConfig.origin 
-        : [corsConfig.origin];
+      const allowedOrigins = Array.isArray(securityConfig.cors.origin) 
+        ? securityConfig.cors.origin 
+        : [securityConfig.cors.origin];
+      
+      // Log for debugging
+      logger.debug('CORS check', { 
+        origin, 
+        allowedOrigins,
+        isAllowed: allowedOrigins.includes(origin)
+      });
       
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        logger.warn(`CORS blocked origin: ${origin}`);
         callback(new Error('Not allowed by CORS'));
       }
     },
-    credentials: corsConfig.credentials,
-    optionsSuccessStatus: corsConfig.optionsSuccessStatus,
-    methods: corsConfig.methods,
-    allowedHeaders: corsConfig.allowedHeaders
+    credentials: securityConfig.cors.credentials,
+    optionsSuccessStatus: securityConfig.cors.optionsSuccessStatus,
+    methods: securityConfig.cors.methods,
+    allowedHeaders: securityConfig.cors.allowedHeaders
   });
 };
 
@@ -99,7 +114,7 @@ const ipFilter = (allowedIPs = []) => {
   };
 };
 
-module.exports = {
+export {
   configureHelmet,
   configureCors,
   addSecurityHeaders,

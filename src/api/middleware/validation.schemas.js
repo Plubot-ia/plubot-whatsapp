@@ -1,4 +1,4 @@
-const Joi = require('joi');
+import Joi from 'joi';
 
 // Common validation patterns
 const patterns = {
@@ -144,4 +144,4 @@ const schemas = {
   })
 };
 
-module.exports = schemas;
+export default schemas;

@@ -4,22 +4,56 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6380:6379"
+      - "6379:6379"
     volumes:
       - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   whatsapp:
     build: .
     ports:
       - "3001:3001"
     environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=debug
       - REDIS_URL=redis://redis:6379
-      - API_KEY=test-api-key-123
-      - FRONTEND_URL=http://localhost:5173
+      - API_KEY=${API_KEY:-test-api-key-123}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5174}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-here}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - SENTRY_RELEASE=${SENTRY_RELEASE:-1.0.0}
+      - CONNECTION_POOL_MAX_SIZE=100
+      - CONNECTION_POOL_MIN_SIZE=10
+      - CONNECTION_POOL_TTL=1800000
+      - CLUSTER_MODE=true
+      - WORKER_COUNT=4
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     volumes:
       - ./auth-sessions:/app/auth-sessions
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health/basic"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
 
 volumes:
   redis-data:
